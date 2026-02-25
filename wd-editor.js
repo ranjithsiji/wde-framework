@@ -908,34 +908,36 @@
 
         function attachAutocomplete($fc) {
             const $input = $fc.find('.wde-val-input');
-            const $wrap = $fc.find('.wde-ac-wrap');
-            const $drop = $fc.find('.wde-ac-drop');
+            const $wrap = $input.closest('.wde-ac-wrap');
+            const $targetDrop = $wrap.find('.wde-ac-drop');
 
-            $input.on('input.wdeac', function () {
+            $input.off('.wdeac').on('input.wdeac', function () {
                 const q = $(this).val().trim();
                 $input.removeData('qid'); // clear stored QID on new typing
                 clearTimeout(acTimer);
-                if (q.length < 2) { $drop.prop('hidden', true).empty(); return; }
+                if (q.length < 2) { $targetDrop.prop('hidden', true).empty(); return; }
                 acTimer = setTimeout(async function () {
                     try {
                         const results = await searchEntities(q);
-                        renderAcDrop($drop, results, $input);
+                        renderAcDrop($targetDrop, results, $input);
                     } catch (_) { /* silent */ }
                 }, 280);
             });
 
             // Close dropdown when focus leaves the wrap
-            $input.on('blur.wdeac', function () {
-                setTimeout(function () { $drop.prop('hidden', true).empty(); }, 200);
+            $input.off('blur.wdeac').on('blur.wdeac', function () {
+                setTimeout(function () { $targetDrop.prop('hidden', true).empty(); }, 200);
             });
 
             $wrap.addClass('wde-ac-active');
         }
 
         function detachAutocomplete($fc) {
-            $fc.find('.wde-val-input').off('.wdeac');
-            $fc.find('.wde-ac-wrap').removeClass('wde-ac-active');
-            $fc.find('.wde-ac-drop').prop('hidden', true).empty();
+            const $input = $fc.find('.wde-val-input');
+            $input.off('.wdeac');
+            const $wrap = $input.closest('.wde-ac-wrap');
+            $wrap.removeClass('wde-ac-active');
+            $wrap.find('.wde-ac-drop').prop('hidden', true).empty();
         }
 
         // Property-PID autocomplete (searches wbsearchentities type=property)
