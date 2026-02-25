@@ -199,6 +199,18 @@
         return d;
     }
 
+    async function removeReference(guid, refHash) {
+        const d = await wdForeignApi.postWithToken('csrf', {
+            action: 'wbremovereferences',
+            statement: guid,
+            references: refHash,
+            summary: 'Remove reference via Codex WDE',
+            format: 'json'
+        });
+        if (d.error) throw new Error(d.error.info);
+        return d;
+    }
+
     async function addReference(guid, rpid, type, valueObj) {
         let dvType = 'string';
         if (type === 'item') dvType = 'wikibase-entityid';
@@ -217,6 +229,19 @@
                 }]
             }),
             summary: 'Add reference via Codex WDE',
+            format: 'json'
+        });
+        if (d.error) throw new Error(d.error.info);
+        return d;
+    }
+
+    async function editReference(guid, refHash, snaksObj) {
+        const d = await wdForeignApi.postWithToken('csrf', {
+            action: 'wbsetreference',
+            statement: guid,
+            reference: refHash,
+            snaks: JSON.stringify(snaksObj),
+            summary: 'Edit reference via Codex WDE',
             format: 'json'
         });
         if (d.error) throw new Error(d.error.info);
@@ -454,17 +479,50 @@
         if (c.references && c.references.length) {
             const refItems = c.references.map((ref, i) => {
                 const order = ref['snaks-order'] || Object.keys(ref.snaks || {});
+                const refSnaksStr = mw.html.escape(JSON.stringify(ref.snaks || {}));
                 const rows = order.map(rpid => {
                     const snaks = (ref.snaks || {})[rpid] || [];
-                    return snaks.map(rs => {
+                    return snaks.map((rs, rsIndex) => {
                         const rLabel = propLabels[rpid] || rpid;
+                        const rdv = rs.datavalue || {};
+                        const rdtype = rdv.type || 'string';
+                        let rRaw = '', rLang = '';
+                        if (rdtype === 'string') { rRaw = rdv.value || ''; }
+                        else if (rdtype === 'wikibase-entityid') {
+                            rRaw = rdv.value ? (rdv.value.id || ('Q' + rdv.value['numeric-id'])) : '';
+                        } else if (rdtype === 'time') {
+                            const rt = (rdv.value && rdv.value.time) ? rdv.value.time.replace(/^\+/, '') : '';
+                            const rp = rdv.value ? rdv.value.precision : 11;
+                            rRaw = rp >= 11 ? rt.slice(0, 10) : rp === 10 ? rt.slice(0, 7) : rt.slice(0, 4);
+                        } else if (rdtype === 'quantity') { rRaw = rdv.value ? rdv.value.amount.replace(/^\+/, '') : ''; }
+                        else if (rdtype === 'monolingualtext') {
+                            rRaw = rdv.value ? rdv.value.text : '';
+                            rLang = rdv.value ? rdv.value.language : '';
+                        }
+
+                        const editBtn = IS_LOGGED_IN
+                            ? ' <button class="wde-r-editbtn" title="Edit reference value"' +
+                            ' data-guid="' + mw.html.escape(guid) + '"' +
+                            ' data-hash="' + mw.html.escape(ref.hash || '') + '"' +
+                            ' data-rpid="' + mw.html.escape(rpid) + '"' +
+                            ' data-index="' + rsIndex + '"' +
+                            ' data-dtype="' + mw.html.escape(rdtype) + '"' +
+                            ' data-raw="' + mw.html.escape(rRaw) + '"' +
+                            ' data-lang="' + mw.html.escape(rLang) + '">✎</button>'
+                            : '';
+
                         return '<tr class="wde-ref-row">' +
                             '<td class="wde-rprop">' + mw.html.escape(rLabel) + '</td>' +
-                            '<td class="wde-rval">' + snakHtml(rs, entLabels) + '</td>' +
+                            '<td class="wde-rval">' + snakHtml(rs, entLabels) + editBtn + '</td>' +
                             '</tr>';
                     }).join('');
                 }).join('');
-                return '<div class="wde-ref-item"><div class="wde-ref-head">Reference</div>' +
+                const delBtn = IS_LOGGED_IN
+                    ? ' <button class="wde-r-delbtn" title="Delete reference"' +
+                    ' data-guid="' + mw.html.escape(guid) + '"' +
+                    ' data-hash="' + mw.html.escape(ref.hash || '') + '">✕</button>'
+                    : '';
+                return '<div class="wde-ref-item" data-snaks="' + refSnaksStr + '"><div class="wde-ref-head">Reference' + delBtn + '</div>' +
                     '<table class="wde-refs-table">' + rows + '</table></div>';
             }).join('');
             refsHtml = '<div class="wde-refs">' + refItems + '</div>';
@@ -835,6 +893,18 @@
                                 }
                             });
                         });
+                        // reference property PIDs and entity values
+                        (c.references || []).forEach(ref => {
+                            Object.keys(ref.snaks || {}).forEach(rpid => {
+                                qualPids.add(rpid);
+                                (ref.snaks[rpid] || []).forEach(rs => {
+                                    const rdv = rs.datavalue || {};
+                                    if (rdv.type === 'wikibase-entityid' && rdv.value) {
+                                        entQids.add(rdv.value.id || ('Q' + rdv.value['numeric-id']));
+                                    }
+                                });
+                            });
+                        });
                     });
                 });
 
@@ -1155,7 +1225,7 @@
                     const claimList = claims[pid] || [];
 
                     // Gather all entity IDs needed for labels:
-                    // 1. main snak values, 2. qualifier snak values
+                    // 1. main snak values, 2. qualifier snak values, 3. reference snak values
                     const ids = [];
                     claimList.forEach(c => {
                         const mdv = (c.mainsnak || {}).datavalue || {};
@@ -1168,15 +1238,30 @@
                                     ids.push(qdv.value.id || ('Q' + qdv.value['numeric-id']));
                             })
                         );
+                        (c.references || []).forEach(ref => {
+                            Object.values(ref.snaks || {}).forEach(snaks =>
+                                snaks.forEach(rs => {
+                                    const rdv = rs.datavalue || {};
+                                    if (rdv.type === 'wikibase-entityid' && rdv.value) {
+                                        ids.push(rdv.value.id || ('Q' + rdv.value['numeric-id']));
+                                    }
+                                })
+                            );
+                        });
                     });
 
-                    // Gather all qualifier property PIDs for label lookup
+                    // Gather all qualifier/reference property PIDs for label lookup
                     const qPids = [];
-                    claimList.forEach(c =>
+                    claimList.forEach(c => {
                         Object.keys(c.qualifiers || {}).forEach(p => {
                             if (!qPids.includes(p)) qPids.push(p);
-                        })
-                    );
+                        });
+                        (c.references || []).forEach(ref => {
+                            Object.keys(ref.snaks || {}).forEach(p => {
+                                if (!qPids.includes(p)) qPids.push(p);
+                            });
+                        });
+                    });
 
                     const [entLabels, propLabels] = await Promise.all([
                         ids.length ? batchLabels(ids) : Promise.resolve({}),
@@ -1215,6 +1300,154 @@
                     alert('\u26a0 Could not delete qualifier: ' + e.message);
                     $btn.prop('disabled', false).text('\u2715');
                 }
+            });
+
+            // ── Reference: delete ──────────────────────────────────────────────
+            $tbody.on('click.wde-rdel', '.wde-r-delbtn', async function () {
+                const $btn = $(this);
+                const guid = $btn.data('guid');
+                const hash = $btn.data('hash');
+                const $row = $btn.closest('tr.wde-row');
+                const pid = $row.data('pid');
+                const qid = $('#wde-qid-chip a').text().trim() || PAGE_QID;
+                if (!confirm('Delete this reference?')) return;
+                $btn.prop('disabled', true).text('\u2026');
+                try {
+                    await removeReference(guid, hash);
+                    await refreshPropValueDisplay(qid, pid, $row);
+                } catch (e) {
+                    alert('\u26a0 Could not delete reference: ' + e.message);
+                    $btn.prop('disabled', false).text('\u2715');
+                }
+            });
+
+            // ── Reference: edit ────────────────────────────────────────────────
+            $tbody.on('click.wde-redit', '.wde-r-editbtn', function () {
+                const $btn = $(this);
+                const guid = $btn.data('guid');
+                const hash = $btn.data('hash');
+                const rpid = $btn.data('rpid');
+                const rsIndex = $btn.data('index');
+                const dtype = $btn.data('dtype');
+                const rawVal = $btn.data('raw');
+                const rawLang = $btn.data('lang') || '';
+                const $td = $btn.closest('td.wde-rval');
+                const $row = $btn.closest('tr.wde-row');
+                const pid = $row.data('pid');
+                const $refItem = $btn.closest('.wde-ref-item');
+                let fullSnaks;
+                try { fullSnaks = JSON.parse($refItem.data('snaks')); } catch (e) { fullSnaks = {}; }
+
+                $tbody.find('.wde-qual-inline').closest('tr.wde-qual-inline-row').remove();
+
+                const typeMap = {
+                    'wikibase-entityid': 'item', 'time': 'time',
+                    'quantity': 'quantity', 'monolingualtext': 'monolingual', 'string': 'string'
+                };
+                const formType = typeMap[dtype] || 'string';
+
+                const $qf = $('<div class="wde-form wde-qual-inline"></div>');
+
+                const $typeSel = $('<select class="wde-type-sel cdx-select"></select>').append(
+                    $('<option>', { value: 'item', text: 'Wikidata item' }),
+                    $('<option>', { value: 'string', text: 'String / ID' }),
+                    $('<option>', { value: 'time', text: 'Date' }),
+                    $('<option>', { value: 'quantity', text: 'Quantity / Number' }),
+                    $('<option>', { value: 'monolingual', text: 'Monolingual text' })
+                ).val(formType);
+                const $langInput = $('<input class="wde-lang-input cdx-text-input__input wde-hidden"' +
+                    ' type="text" placeholder="lang e.g. en" maxlength="10" />').val(rawLang);
+                $qf.append($('<div class="wde-form-row wde-form-row-type"></div>').append($typeSel, $langInput));
+
+                const $valRow = $('<div class="wde-form-row wde-form-row-val"></div>');
+                const $valAcWrap = $('<div class="wde-ac-wrap"></div>').append(
+                    $('<input class="wde-val-input cdx-text-input__input" type="text" autocomplete="off" />')
+                        .val(rawVal).data('qid', formType === 'item' ? rawVal : undefined),
+                    $('<div class="wde-ac-drop" hidden></div>')
+                );
+
+                const $unitWrap = $('<div class="wde-unit-wrap wde-hidden"></div>').append(
+                    $('<span class="wde-unit-label">Unit:</span>'),
+                    $('<div class="wde-ac-wrap wde-unit-ac-wrap"></div>').append(
+                        $('<input class="wde-unit-input cdx-text-input__input" type="text" placeholder="Search unit" autocomplete="off" />'),
+                        $('<div class="wde-ac-drop wde-unit-drop" hidden></div>')
+                    )
+                );
+                $valRow.append(
+                    $valAcWrap, $unitWrap,
+                    $('<button class="wde-save-btn cdx-button cdx-button--action-progressive cdx-button--weight-primary">Update</button>'),
+                    $('<button class="wde-cancel-btn cdx-button cdx-button--weight-quiet">Cancel</button>')
+                );
+                $qf.append($valRow, $('<div class="wde-form-msg" hidden></div>'));
+
+                $td.closest('tr.wde-ref-row').after(
+                    $('<tr class="wde-qual-inline-row"><td colspan="2"></td></tr>')
+                        .find('td').append($qf).end()
+                );
+
+                const $valInput = $qf.find('.wde-val-input');
+
+                function updateValInputType(t) {
+                    $langInput.toggleClass('wde-hidden', t !== 'monolingual');
+                    $unitWrap.toggleClass('wde-hidden', t !== 'quantity');
+                    if (t === 'item') {
+                        $valInput.attr({ type: 'text', placeholder: 'Search Wikidata item…' });
+                        attachAutocomplete($qf);
+                        attachUnitAutocomplete($qf);
+                    } else if (t === 'time') {
+                        $valInput.attr({ type: 'date', placeholder: '' });
+                        detachAutocomplete($qf);
+                    } else if (t === 'quantity') {
+                        $valInput.attr({ type: 'number', placeholder: 'Number e.g. 42', step: 'any' });
+                        detachAutocomplete($qf);
+                        attachUnitAutocomplete($qf);
+                    } else if (t === 'monolingual') {
+                        $valInput.attr({ type: 'text', placeholder: 'Text in chosen language' });
+                        detachAutocomplete($qf);
+                    } else {
+                        $valInput.attr({ type: 'text', placeholder: 'Enter value…' });
+                        detachAutocomplete($qf);
+                    }
+                }
+
+                $typeSel.on('change', function () { updateValInputType($(this).val()); });
+                updateValInputType(formType);
+
+                $qf.find('.wde-cancel-btn').on('click', () => $qf.closest('tr.wde-qual-inline-row').remove());
+
+                $qf.find('.wde-save-btn').on('click', async () => {
+                    const type = $typeSel.val();
+                    const stored = type === 'item' ? $valInput.data('qid') : null;
+                    const raw = stored || $valInput.val();
+                    const lang = $langInput.val();
+                    const unit = $qf.find('.wde-unit-input').data('unit-qid') || $qf.find('.wde-unit-input').val().trim();
+                    const $msg = $qf.find('.wde-form-msg');
+                    const $sav = $qf.find('.wde-save-btn');
+                    $msg.prop('hidden', true).removeClass('wde-ok wde-err');
+
+                    let vo;
+                    try { vo = buildValueObj(type, raw, lang, unit); }
+                    catch (e) { showMsg($msg, e.message, 'wde-err'); return; }
+
+                    $sav.prop('disabled', true).text('Saving…');
+
+                    let dvType = 'string';
+                    if (type === 'item') dvType = 'wikibase-entityid';
+                    else if (type === 'time') dvType = 'time';
+                    else if (type === 'quantity') dvType = 'quantity';
+                    else if (type === 'monolingual') dvType = 'monolingualtext';
+
+                    fullSnaks[rpid][rsIndex].datavalue = { type: dvType, value: vo };
+
+                    try {
+                        const qid = $('#wde-qid-chip a').text().trim() || PAGE_QID;
+                        await editReference(guid, hash, fullSnaks);
+                        await refreshPropValueDisplay(qid, pid, $row);
+                    } catch (e) {
+                        showMsg($msg, '⚠ ' + e.message, 'wde-err');
+                        $sav.prop('disabled', false).text('Update');
+                    }
+                });
             });
 
             // \u2500\u2500 Qualifier: edit \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -2150,13 +2383,13 @@
     min-width:110px; max-width:160px; padding-right:8px !important;
 }
 .wde-qval { color:var(--color-base,#202122); word-break:break-word; }
-.wde-q-editbtn, .wde-q-delbtn {
+.wde-q-editbtn, .wde-q-delbtn, .wde-r-delbtn, .wde-r-editbtn {
     border:none; background:transparent; cursor:pointer;
     font-size:.78rem; color:#72777d; padding:0 2px;
     opacity:.6; transition:opacity .15s, color .15s;
 }
-.wde-q-editbtn:hover { opacity:1; color:#3366cc; }
-.wde-q-delbtn:hover  { opacity:1; color:#c44; }
+.wde-q-editbtn:hover, .wde-r-editbtn:hover { opacity:1; color:#3366cc; }
+.wde-q-delbtn:hover, .wde-r-delbtn:hover  { opacity:1; color:#c44; }
 .wde-q-addbtn {
     font-size:.75rem; color:#3366cc; background:transparent; border:none;
     cursor:pointer; padding:2px 0; text-decoration:underline dotted;
