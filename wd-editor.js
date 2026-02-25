@@ -774,203 +774,205 @@
                         $sav.prop('disabled', false).text('Save');
                     }
                 });
-                // ── Delete button ─────────────────────────────────────────────
-                $tbody.on('click.wde-del', '.wde-delbtn', async function () {
-                    const guid = $(this).data('guid');
-                    const $li = $(this).closest('li');
-                    const $row = $(this).closest('tr.wde-row');
-                    if (!guid) return;
-                    if (!confirm('Delete this value from Wikidata?')) return;
-                    $(this).prop('disabled', true).text('…');
-                    try {
-                        await deleteClaim(guid);
-                        $li.fadeOut(200, function () {
-                            $(this).remove();
-                            // If no claims left, show dash
-                            const $vlist = $row.find('.wde-vlist');
-                            if (!$vlist.find('li:not(.wde-overflow)').length) {
-                                $vlist.replaceWith('<span class="wde-empty">—</span>');
-                                $row.find('.wde-status-chip')
-                                    .removeClass('wde-present').addClass('wde-missing').text('Missing');
-                                $row.find('.wde-addbtn').text('+ Add value');
-                                retally();
-                            }
-                        });
-                    } catch (e) {
-                        alert('⚠ Could not delete: ' + e.message);
-                        $(this).prop('disabled', false).text('✕');
-                    }
-                });
+            }); // end .wde-addbtn click
 
-                // ── Edit button ───────────────────────────────────────────────
-                $tbody.on('click.wde-edit', '.wde-editbtn', function () {
-                    const $btn = $(this);
-                    const guid = $btn.data('guid');
-                    const dtype = $btn.data('dtype');  // wikibase-entityid | string | time | etc.
-                    const rawVal = $btn.data('raw');
-                    const rawLang = $btn.data('lang') || '';
-                    const $li = $btn.closest('li');
-                    const $row = $btn.closest('tr.wde-row');
-                    const pid = $row.data('pid');
+            // ── Delete button ─────────────────────────────────────────
+            $tbody.on('click.wde-del', '.wde-delbtn', async function () {
+                const guid = $(this).data('guid');
+                const $li = $(this).closest('li');
+                const $row = $(this).closest('tr.wde-row');
+                if (!guid) return;
+                if (!confirm('Delete this value from Wikidata?')) return;
+                $(this).prop('disabled', true).text('…');
+                try {
+                    await deleteClaim(guid);
+                    $li.fadeOut(200, function () {
+                        $(this).remove();
+                        // If no claims left, show dash
+                        const $vlist = $row.find('.wde-vlist');
+                        if (!$vlist.find('li:not(.wde-overflow)').length) {
+                            $vlist.replaceWith('<span class="wde-empty">—</span>');
+                            $row.find('.wde-status-chip')
+                                .removeClass('wde-present').addClass('wde-missing').text('Missing');
+                            $row.find('.wde-addbtn').text('+ Add value');
+                            retally();
+                        }
+                    });
+                } catch (e) {
+                    alert('⚠ Could not delete: ' + e.message);
+                    $(this).prop('disabled', false).text('✕');
+                }
+            });
 
-                    // Map datavalue type → form type
-                    const typeMap = {
-                        'wikibase-entityid': 'item',
-                        'time': 'time',
-                        'quantity': 'quantity',
-                        'monolingualtext': 'monolingual',
-                        'string': 'string'
-                    };
-                    const formType = typeMap[dtype] || 'string';
+            // ── Edit button ───────────────────────────────────────────────
+            $tbody.on('click.wde-edit', '.wde-editbtn', function () {
+                const $btn = $(this);
+                const guid = $btn.data('guid');
+                const dtype = $btn.data('dtype');  // wikibase-entityid | string | time | etc.
+                const rawVal = $btn.data('raw');
+                const rawLang = $btn.data('lang') || '';
+                const $li = $btn.closest('li');
+                const $row = $btn.closest('tr.wde-row');
+                const pid = $row.data('pid');
 
-                    // Close any open form first
-                    $tbody.find('.wde-val-form').empty();
-                    $tbody.find('.wde-edit-inline').remove();
+                // Map datavalue type → form type
+                const typeMap = {
+                    'wikibase-entityid': 'item',
+                    'time': 'time',
+                    'quantity': 'quantity',
+                    'monolingualtext': 'monolingual',
+                    'string': 'string'
+                };
+                const formType = typeMap[dtype] || 'string';
 
-                    // Build inline edit form right after the <li>
-                    const $eform = $('<div class="wde-form wde-edit-inline"></div>');
+                // Close any open form first
+                $tbody.find('.wde-val-form').empty();
+                $tbody.find('.wde-edit-inline').remove();
 
-                    // Row 1: type selector (locked to detected type)
-                    $eform.append(
-                        $('<div class="wde-form-row wde-form-row-type"></div>').append(
-                            $('<select class="wde-type-sel cdx-select"></select>').append(
-                                $('<option>', { value: 'string', text: 'String / ID' }),
-                                $('<option>', { value: 'item', text: 'Wikidata item' }),
-                                $('<option>', { value: 'time', text: 'Date' }),
-                                $('<option>', { value: 'quantity', text: 'Quantity' }),
-                                $('<option>', { value: 'monolingual', text: 'Monolingual text' })
-                            ).val(formType),
-                            $('<input class="wde-lang-input cdx-text-input__input' +
-                                (formType === 'monolingual' ? '' : ' wde-hidden') + '"' +
-                                ' type="text" placeholder="Language code e.g. en" maxlength="10" />')
-                                .val(rawLang)
-                        )
-                    );
+                // Build inline edit form right after the <li>
+                const $eform = $('<div class="wde-form wde-edit-inline"></div>');
 
-                    // Row 2: value input + Save + Cancel
-                    const $acWrap = $('<div class="wde-ac-wrap"></div>');
-                    const $valInput = $('<input class="wde-val-input cdx-text-input__input"' +
-                        ' type="text" autocomplete="off" />').val(rawVal);
-                    const $acDrop = $('<div class="wde-ac-drop" hidden></div>');
-                    $acWrap.append($valInput, $acDrop);
+                // Row 1: type selector (locked to detected type)
+                $eform.append(
+                    $('<div class="wde-form-row wde-form-row-type"></div>').append(
+                        $('<select class="wde-type-sel cdx-select"></select>').append(
+                            $('<option>', { value: 'string', text: 'String / ID' }),
+                            $('<option>', { value: 'item', text: 'Wikidata item' }),
+                            $('<option>', { value: 'time', text: 'Date' }),
+                            $('<option>', { value: 'quantity', text: 'Quantity' }),
+                            $('<option>', { value: 'monolingual', text: 'Monolingual text' })
+                        ).val(formType),
+                        $('<input class="wde-lang-input cdx-text-input__input' +
+                            (formType === 'monolingual' ? '' : ' wde-hidden') + '"' +
+                            ' type="text" placeholder="Language code e.g. en" maxlength="10" />')
+                            .val(rawLang)
+                    )
+                );
 
-                    const $valRow = $('<div class="wde-form-row wde-form-row-val"></div>').append(
-                        $acWrap,
-                        $('<button class="wde-save-btn cdx-button cdx-button--action-progressive' +
-                            ' cdx-button--weight-primary">Update</button>'),
-                        $('<button class="wde-cancel-btn cdx-button cdx-button--weight-quiet">Cancel</button>')
-                    );
-                    $eform.append($valRow);
-                    $eform.append($('<div class="wde-form-msg" hidden></div>'));
+                // Row 2: value input + Save + Cancel
+                const $acWrap = $('<div class="wde-ac-wrap"></div>');
+                const $valInput = $('<input class="wde-val-input cdx-text-input__input"' +
+                    ' type="text" autocomplete="off" />').val(rawVal);
+                const $acDrop = $('<div class="wde-ac-drop" hidden></div>');
+                $acWrap.append($valInput, $acDrop);
 
-                    $li.after($eform);
+                const $valRow = $('<div class="wde-form-row wde-form-row-val"></div>').append(
+                    $acWrap,
+                    $('<button class="wde-save-btn cdx-button cdx-button--action-progressive' +
+                        ' cdx-button--weight-primary">Update</button>'),
+                    $('<button class="wde-cancel-btn cdx-button cdx-button--weight-quiet">Cancel</button>')
+                );
+                $eform.append($valRow);
+                $eform.append($('<div class="wde-form-msg" hidden></div>'));
 
-                    // Set placeholder and autocomplete based on detected type
-                    const $typeSel = $eform.find('.wde-type-sel');
-                    if (formType === 'item') {
+                $li.after($eform);
+
+                // Set placeholder and autocomplete based on detected type
+                const $typeSel = $eform.find('.wde-type-sel');
+                if (formType === 'item') {
+                    $valInput.attr('placeholder', 'Search Wikidata…');
+                    attachAutocomplete($eform);
+                    // Pre-store the QID so save works immediately without re-selecting
+                    $valInput.data('qid', rawVal);
+                } else {
+                    $valInput.attr('placeholder',
+                        formType === 'time' ? 'YYYY or YYYY-MM or YYYY-MM-DD' :
+                            formType === 'quantity' ? 'Number e.g. 42' :
+                                formType === 'monolingual' ? 'Text in chosen language' : 'Enter value…');
+                }
+
+                // Type selector changes
+                $typeSel.on('change', function () {
+                    const t = $(this).val();
+                    $eform.find('.wde-lang-input').toggleClass('wde-hidden', t !== 'monolingual');
+                    if (t === 'item') {
                         $valInput.attr('placeholder', 'Search Wikidata…');
                         attachAutocomplete($eform);
-                        // Pre-store the QID so save works immediately without re-selecting
-                        $valInput.data('qid', rawVal);
                     } else {
                         $valInput.attr('placeholder',
-                            formType === 'time' ? 'YYYY or YYYY-MM or YYYY-MM-DD' :
-                                formType === 'quantity' ? 'Number e.g. 42' :
-                                    formType === 'monolingual' ? 'Text in chosen language' : 'Enter value…');
+                            t === 'time' ? 'YYYY or YYYY-MM or YYYY-MM-DD' :
+                                t === 'quantity' ? 'Number e.g. 42' :
+                                    t === 'monolingual' ? 'Text in chosen language' : 'Enter value…');
+                        detachAutocomplete($eform);
                     }
-
-                    // Type selector changes
-                    $typeSel.on('change', function () {
-                        const t = $(this).val();
-                        $eform.find('.wde-lang-input').toggleClass('wde-hidden', t !== 'monolingual');
-                        if (t === 'item') {
-                            $valInput.attr('placeholder', 'Search Wikidata…');
-                            attachAutocomplete($eform);
-                        } else {
-                            $valInput.attr('placeholder',
-                                t === 'time' ? 'YYYY or YYYY-MM or YYYY-MM-DD' :
-                                    t === 'quantity' ? 'Number e.g. 42' :
-                                        t === 'monolingual' ? 'Text in chosen language' : 'Enter value…');
-                            detachAutocomplete($eform);
-                        }
-                    });
-
-                    $eform.find('.wde-cancel-btn').on('click', () => {
-                        clearTimeout(acTimer);
-                        $eform.remove();
-                    });
-
-                    $eform.find('.wde-save-btn').on('click', async () => {
-                        const type = $typeSel.val();
-                        const stored = (type === 'item') ? $valInput.data('qid') : null;
-                        const raw = stored || $valInput.val();
-                        const display = $valInput.val() || raw;
-                        const lang = $eform.find('.wde-lang-input').val();
-                        const $msg = $eform.find('.wde-form-msg');
-                        const $sav = $eform.find('.wde-save-btn');
-
-                        $msg.prop('hidden', true).removeClass('wde-ok wde-err');
-
-                        let valueObj;
-                        try { valueObj = buildValueObj(type, raw, lang); }
-                        catch (e) { showMsg($msg, e.message, 'wde-err'); return; }
-
-                        $sav.prop('disabled', true).text('Saving…');
-                        try {
-                            await editClaim(guid, valueObj);
-                            showMsg($msg, '✓ Updated on Wikidata!', 'wde-ok');
-                            // Update the displayed value in the <li>
-                            $li.find('.wde-str, .wde-entlink, .wde-time, .wde-num, .wde-meta').remove();
-                            $li.prepend('<span class="wde-str">' + mw.html.escape(display) +
-                                '</span> <em class="wde-saved">(reload for full value)</em> ');
-                            // Update data attrs on edit button for next edit
-                            $btn.data('raw', raw).data('dtype', dtype);
-                            clearTimeout(acTimer);
-                            setTimeout(() => $eform.remove(), 2000);
-                        } catch (e) {
-                            showMsg($msg, '⚠ ' + e.message, 'wde-err');
-                            $sav.prop('disabled', false).text('Update');
-                        }
-                    });
                 });
-            }
+
+                $eform.find('.wde-cancel-btn').on('click', () => {
+                    clearTimeout(acTimer);
+                    $eform.remove();
+                });
+
+                $eform.find('.wde-save-btn').on('click', async () => {
+                    const type = $typeSel.val();
+                    const stored = (type === 'item') ? $valInput.data('qid') : null;
+                    const raw = stored || $valInput.val();
+                    const display = $valInput.val() || raw;
+                    const lang = $eform.find('.wde-lang-input').val();
+                    const $msg = $eform.find('.wde-form-msg');
+                    const $sav = $eform.find('.wde-save-btn');
+
+                    $msg.prop('hidden', true).removeClass('wde-ok wde-err');
+
+                    let valueObj;
+                    try { valueObj = buildValueObj(type, raw, lang); }
+                    catch (e) { showMsg($msg, e.message, 'wde-err'); return; }
+
+                    $sav.prop('disabled', true).text('Saving…');
+                    try {
+                        await editClaim(guid, valueObj);
+                        showMsg($msg, '✓ Updated on Wikidata!', 'wde-ok');
+                        // Update the displayed value in the <li>
+                        $li.find('.wde-str, .wde-entlink, .wde-time, .wde-num, .wde-meta').remove();
+                        $li.prepend('<span class="wde-str">' + mw.html.escape(display) +
+                            '</span> <em class="wde-saved">(reload for full value)</em> ');
+                        // Update data attrs on edit button for next edit
+                        $btn.data('raw', raw).data('dtype', dtype);
+                        clearTimeout(acTimer);
+                        setTimeout(() => $eform.remove(), 2000);
+                    } catch (e) {
+                        showMsg($msg, '⚠ ' + e.message, 'wde-err');
+                        $sav.prop('disabled', false).text('Update');
+                    }
+                });
+            });
+        }
 
         function retally() {
-                    const np = $tbody.find('.wde-present').length;
-                    const nm = $tbody.find('.wde-missing').length;
-                    $summary.html(
-                        '<span class="wde-sp">' + np + ' present</span>' +
-                        ' · <span class="wde-sm">' + nm + ' missing</span>'
-                    );
-                }
+            const np = $tbody.find('.wde-present').length;
+            const nm = $tbody.find('.wde-missing').length;
+            $summary.html(
+                '<span class="wde-sp">' + np + ' present</span>' +
+                ' · <span class="wde-sm">' + nm + ' missing</span>'
+            );
+        }
 
         function showMsg($m, txt, cls) {
-                    $m.text(txt).addClass(cls).prop('hidden', false);
-                }
+            $m.text(txt).addClass(cls).prop('hidden', false);
+        }
 
         // ── Status helpers ───────────────────────────────────────────
         function showLoading(msg) {
-                    $status.show().removeClass('wde-err');
-                    $stxt.text(msg);
-                    $status.find('.wde-spinner').show();
-                    $content.prop('hidden', true);
-                }
+            $status.show().removeClass('wde-err');
+            $stxt.text(msg);
+            $status.find('.wde-spinner').show();
+            $content.prop('hidden', true);
+        }
         function showError(msg) {
-                    $content.prop('hidden', true);
-                    $status.show().addClass('wde-err');
-                    $status.find('.wde-spinner').hide();
-                    $stxt.text('⚠ ' + msg);
-                }
-
-        return openDialog;
+            $content.prop('hidden', true);
+            $status.show().addClass('wde-err');
+            $status.find('.wde-spinner').hide();
+            $stxt.text('⚠ ' + msg);
         }
 
-        // ─────────────────────────────────────────────────────────────────
-        //  STYLES
-        // ─────────────────────────────────────────────────────────────────
+        return openDialog;
+    }
 
-        function injectStyles() {
-            $('<style>').prop('id', 'wde-styles').text(`
+    // ─────────────────────────────────────────────────────────────────
+    //  STYLES
+    // ─────────────────────────────────────────────────────────────────
+
+    function injectStyles() {
+        $('<style>').prop('id', 'wde-styles').text(`
 /* ── Overlay & dialog ─────────────────────────── */
 #wde-overlay {
     display:none; position:fixed; inset:0; z-index:10000;
@@ -1220,68 +1222,68 @@
 .wde-ok  { background:#d5fdf4; color:#14623d; border:1px solid #71d9b3; }
 .wde-err { background:#fce8e8; color:#b32424; border:1px solid #e87c7c; }
 ` ).appendTo('head');
-        }
+    }
 
-        // ─────────────────────────────────────────────────────────────────
-        //  TOOLS MENU LINK
-        // ─────────────────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────
+    //  TOOLS MENU LINK
+    // ─────────────────────────────────────────────────────────────────
 
-        function addToolsLink(openDialog) {
-            const portlet = document.getElementById('p-cactions') ? 'p-cactions' : 'p-tb';
-            const $link = $(mw.util.addPortletLink(
-                portlet, '#', 'Wikidata editor', 't-wikidata-editor',
-                'Edit Wikidata statements for this article (Alt+Shift+E)', 'E'
-            ));
-            if (!$link.length) return;
-            $link.on('click', e => {
-                e.preventDefault();
-                if (!PAGE_QID) {
-                    mw.notify('No Wikidata item is linked to this page.',
-                        { type: 'error', tag: 'wde' });
-                    return;
-                }
-                openDialog(PAGE_QID);
-            });
-        }
-
-        // ─────────────────────────────────────────────────────────────────
-        //  BOOT
-        //  If window.WDE_CONFIG_PAGE is set (from common.js), fetch that
-        //  page's JSON and use it instead of the embedded RAW_CONFIG.
-        // ─────────────────────────────────────────────────────────────────
-
-        async function boot() {
-            // Check for external config page declared in common.js
-            const configPage = (typeof window.WDE_CONFIG_PAGE === 'string')
-                ? window.WDE_CONFIG_PAGE.trim() : '';
-
-            if (configPage) {
-                try {
-                    const raw = await fetchConfigPage(configPage);
-                    ENTITY_TYPES = buildEntityTypes(raw);
-                    mw.log('[WikidataEditor] Config loaded from "' + configPage + '".');
-                } catch (e) {
-                    mw.log.warn('[WikidataEditor] Could not load config from "' +
-                        configPage + '": ' + e.message +
-                        ' — falling back to embedded config.');
-                }
+    function addToolsLink(openDialog) {
+        const portlet = document.getElementById('p-cactions') ? 'p-cactions' : 'p-tb';
+        const $link = $(mw.util.addPortletLink(
+            portlet, '#', 'Wikidata editor', 't-wikidata-editor',
+            'Edit Wikidata statements for this article (Alt+Shift+E)', 'E'
+        ));
+        if (!$link.length) return;
+        $link.on('click', e => {
+            e.preventDefault();
+            if (!PAGE_QID) {
+                mw.notify('No Wikidata item is linked to this page.',
+                    { type: 'error', tag: 'wde' });
+                return;
             }
+            openDialog(PAGE_QID);
+        });
+    }
 
-            injectStyles();
-            const openDialog = buildDialog();
-            addToolsLink(openDialog);
+    // ─────────────────────────────────────────────────────────────────
+    //  BOOT
+    //  If window.WDE_CONFIG_PAGE is set (from common.js), fetch that
+    //  page's JSON and use it instead of the embedded RAW_CONFIG.
+    // ─────────────────────────────────────────────────────────────────
+
+    async function boot() {
+        // Check for external config page declared in common.js
+        const configPage = (typeof window.WDE_CONFIG_PAGE === 'string')
+            ? window.WDE_CONFIG_PAGE.trim() : '';
+
+        if (configPage) {
+            try {
+                const raw = await fetchConfigPage(configPage);
+                ENTITY_TYPES = buildEntityTypes(raw);
+                mw.log('[WikidataEditor] Config loaded from "' + configPage + '".');
+            } catch (e) {
+                mw.log.warn('[WikidataEditor] Could not load config from "' +
+                    configPage + '": ' + e.message +
+                    ' — falling back to embedded config.');
+            }
         }
 
-        mw.loader.using(['codex-styles', 'mediawiki.ForeignApi'])
-            .then(boot)
-            .catch(() => {
-                // ForeignApi is critical for logged-in saves; log if missing
-                mw.log.warn('[WikidataEditor] mediawiki.ForeignApi not available; edits may be anonymous.');
-                $('<link>', {
-                    rel: 'stylesheet',
-                    href: '/w/load.php?modules=codex-styles&only=styles'
-                }).appendTo('head');
-                boot();
-            });
+        injectStyles();
+        const openDialog = buildDialog();
+        addToolsLink(openDialog);
+    }
 
-    } (mediaWiki, jQuery));
+    mw.loader.using(['codex-styles', 'mediawiki.ForeignApi'])
+        .then(boot)
+        .catch(() => {
+            // ForeignApi is critical for logged-in saves; log if missing
+            mw.log.warn('[WikidataEditor] mediawiki.ForeignApi not available; edits may be anonymous.');
+            $('<link>', {
+                rel: 'stylesheet',
+                href: '/w/load.php?modules=codex-styles&only=styles'
+            }).appendTo('head');
+            boot();
+        });
+
+}(mediaWiki, jQuery));
