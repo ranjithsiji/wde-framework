@@ -1,6 +1,7 @@
 /**
  * WikidataEditor — Wikipedia User Script
  * ==========================================
+ * Part of Wikidata Editor Framework
  * Config-driven Wikidata property editor.
  *
  * TABLE COLUMNS:  Property (label + PID in brackets, linked)  |  Value  |  Status

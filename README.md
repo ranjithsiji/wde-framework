@@ -19,8 +19,8 @@ CONFIG:
         var WDE_CONFIG_PAGE = 'User:YourName/wikidata-editor-config.json';
         mw.loader.load('//en.wikipedia.org/w/index.php?title=User:YourName/wde-editor.js&action=raw&ctype=text/javascript');
  
-    If WDE_CONFIG_PAGE is set, it takes priority over the embedded config.
-    The page must contain valid JSON in the same format as configs.json.
+If WDE_CONFIG_PAGE is set, it takes priority over the embedded config.
+The page must contain valid JSON in the same format as configs.json.
 
 - **Two User Interfaces:**
   - `wde-editor.js`: The classic, jQuery-powered editor script.
@@ -34,7 +34,7 @@ Add the following snippet to your `common.js` on Wikipedia to start using the fr
 
 ```javascript
 // Optional: Use a remote configuration page for custom properties
-// var WDE_CONFIG_PAGE = 'User:YourName/wikidata-editor-config.json';
+// var WDE_CONFIG_PAGE = 'User:YourName/wde-editor-config.json';
 mw.loader.load('//en.wikipedia.org/w/index.php?title=User:YourName/wde-editor.js&action=raw&ctype=text/javascript');
 ```
 
@@ -43,6 +43,12 @@ mw.loader.load('//en.wikipedia.org/w/index.php?title=User:YourName/wde-editor.js
 ### Lookup Version (`wde-lookup.js`)
 
 The `wde-lookup.js` script uses Vue 3 and the Wikimedia Codex design system. Load it similarly from your `common.js`. This script is used to look up Wikidata statements of the item.
+
+```javascript
+// Optional: Use a remote configuration page for custom properties
+// var WDE_CONFIG_PAGE = 'User:YourName/wde-lookup-config.json';
+mw.loader.load('//en.wikipedia.org/w/index.php?title=User:YourName/wde-lookup.js&action=raw&ctype=text/javascript');
+```
 
 ## File Structure
 
