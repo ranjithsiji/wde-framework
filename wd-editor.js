@@ -449,9 +449,30 @@
                 '+ Add qualifier</button></div>';
         }
 
+        // ── References sub-block ──────────────────────────────────────
+        let refsHtml = '';
+        if (c.references && c.references.length) {
+            const refItems = c.references.map((ref, i) => {
+                const order = ref['snaks-order'] || Object.keys(ref.snaks || {});
+                const rows = order.map(rpid => {
+                    const snaks = (ref.snaks || {})[rpid] || [];
+                    return snaks.map(rs => {
+                        const rLabel = propLabels[rpid] || rpid;
+                        return '<tr class="wde-ref-row">' +
+                            '<td class="wde-rprop">' + mw.html.escape(rLabel) + '</td>' +
+                            '<td class="wde-rval">' + snakHtml(rs, entLabels) + '</td>' +
+                            '</tr>';
+                    }).join('');
+                }).join('');
+                return '<div class="wde-ref-item"><div class="wde-ref-head">Reference</div>' +
+                    '<table class="wde-refs-table">' + rows + '</table></div>';
+            }).join('');
+            refsHtml = '<div class="wde-refs">' + refItems + '</div>';
+        }
+
         return '<li data-guid="' + mw.html.escape(guid) + '">' +
             '<div class="wde-claim-main">' + snakHtml(snak, entLabels) + editBtns + '</div>' +
-            qualsHtml +
+            qualsHtml + refsHtml +
             '</li>';
     }
 
@@ -2106,6 +2127,21 @@
     border-left:2px solid #eaecf0;
     padding-left:8px;
 }
+.wde-refs {
+    margin:4px 0 2px 10px;
+    border-left:2px solid #eaecf0;
+    padding-left:8px;
+}
+.wde-ref-item { font-size:.82rem; margin-top:2px; }
+.wde-ref-head { color:#54595d; font-weight:600; font-size:.78rem; border-bottom:1px solid #eaecf0; width:max-content; padding-right:6px; margin-bottom:2px; }
+.wde-refs-table { border-collapse:collapse; width:100%; font-size:.82rem; }
+.wde-refs-table td { padding:1px 4px 1px 0; vertical-align:top; }
+.wde-rprop {
+    color:#72777d; white-space:nowrap; font-style:italic;
+    min-width:110px; max-width:160px; padding-right:8px !important;
+}
+.wde-rval { color:var(--color-base,#202122); word-break:break-word; }
+
 .wde-quals-empty { /* no table, just the add btn */ }
 .wde-quals-table { border-collapse:collapse; width:100%; font-size:.82rem; }
 .wde-quals-table td { padding:1px 4px 1px 0; vertical-align:top; }
