@@ -62,6 +62,9 @@ mw.loader.load('//en.wikipedia.org/w/index.php?title=User:YourName/wde-lookup.js
 - **Alt+Shift+B**: Quickly launch the Wikidata Editor.
 - **Alt+Shift+D**: Quickly launch the Wikidata Lookup.
 
+## Additional Information
+This project is a complete rewrite of the [WE-Framework](https://github.com/vlsergey/WE-Framework) by [Sergey](https://github.com/vlsergey). Detailed information about the project can be found in the [Википедия:WE-Framework](https://ru.wikipedia.org/wiki/%D0%92%D0%B8%D0%BA%D0%B8%D0%BF%D0%B5%D0%B4%D0%B8%D1%8F:WE-Framework).
+
 ## License
 
 This project is licensed under the GNU General Public License v3.0 (GPLv3). See the [LICENSE](LICENSE) file for more details.
