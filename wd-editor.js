@@ -508,12 +508,17 @@
                             ' data-index="' + rsIndex + '"' +
                             ' data-dtype="' + mw.html.escape(rdtype) + '"' +
                             ' data-raw="' + mw.html.escape(rRaw) + '"' +
-                            ' data-lang="' + mw.html.escape(rLang) + '">✎</button>'
+                            ' data-lang="' + mw.html.escape(rLang) + '" style="margin-top: 5px; background: #f8f9fa; border: 1px solid #c8ccd1; border-radius: 2px; padding: 4px 8px; color: #202122; opacity: 1; margin-bottom: 5px;">✎ Edit reference</button>'
                             : '';
 
-                        return '<tr class="wde-ref-row">' +
-                            '<td class="wde-rprop">' + mw.html.escape(rLabel) + '</td>' +
-                            '<td class="wde-rval">' + snakHtml(rs, entLabels) + editBtn + '</td>' +
+                        return '<tr>' +
+                            '<td class="wde-rprop" colspan="2" style="border-bottom: none; padding-bottom: 2px; color: #54595d; font-size: 0.9em; max-width: none;">' + mw.html.escape(rLabel) + '</td>' +
+                            '</tr>' +
+                            '<tr class="wde-ref-row">' +
+                            '<td class="wde-rval" colspan="2" style="border-top: none; padding-top: 2px; padding-bottom: 10px;">' +
+                            snakHtml(rs, entLabels) +
+                            '<div class="wde-ref-actions">' + editBtn + '</div>' +
+                            '</td>' +
                             '</tr>';
                     }).join('');
                 }).join('');
