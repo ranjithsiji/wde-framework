@@ -544,6 +544,9 @@
             '<div class="wde-htools">',
             '<span id="wde-qid-chip"  class="wde-chip"          hidden></span>',
             '<span id="wde-type-chip" class="wde-chip wde-chip-type" hidden></span>',
+            '<button id="wde-minimize" class="cdx-button cdx-button--weight-quiet" aria-label="Minimize">',
+            '<svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor"><path d="M4 9h12v2H4z"/></svg>',
+            '</button>',
             '<button id="wde-close" class="cdx-button cdx-button--weight-quiet" aria-label="Close">',
             '<svg viewBox="0 0 20 20" width="14" height="14" fill="currentColor">',
             '<path d="M4.34 2.93 2.93 4.34 8.59 10l-5.66 5.66 1.41 1.41L10 11.41',
@@ -564,6 +567,7 @@
             '<span class="wde-dot wde-dot-m"></span>Missing',
             '</button>',
             '</div>',
+            (IS_LOGGED_IN ? '<button id="wde-custom-addbtn" class="cdx-button cdx-button--weight-normal wde-custom-addbtn">+ Add statement</button>' : ''),
             '<input id="wde-search" class="cdx-text-input__input wde-search-input"',
             ' type="search" placeholder="Filter by property name or PID…" autocomplete="off" />',
             '<div id="wde-summary" class="wde-summary"></div>',
@@ -573,9 +577,46 @@
             '<div id="wde-body">',
             '<div id="wde-status">',
             '<span class="wde-spinner"></span>',
-            '<span id="wde-stxt">Loading…</span>',
+            '<span id="wde-stxt">Loading Wikidata statements…</span>',
             '</div>',
             '<div id="wde-content" hidden>',
+
+            (IS_LOGGED_IN ? [
+                '<div class="wde-custom-statement-section wde-custom-top">',
+                '<div id="wde-custom-form" class="wde-form wde-custom-form wde-hidden">',
+                '<div class="wde-form-row wde-form-row-type wde-qpid-wrap">',
+                '<input id="wde-custom-pid" class="wde-qpid-input cdx-text-input__input" type="text" placeholder="Search property (e.g. start time / P580)" />',
+                '<div class="wde-ac-drop wde-qpid-drop" hidden></div>',
+                '</div>',
+                '<div class="wde-form-row wde-form-row-type">',
+                '<select id="wde-custom-type" class="wde-type-sel cdx-select">',
+                '<option value="item">Wikidata item</option>',
+                '<option value="string">String / ID</option>',
+                '<option value="time">Date</option>',
+                '<option value="quantity">Quantity / Number</option>',
+                '<option value="monolingual">Monolingual text</option>',
+                '</select>',
+                '<input id="wde-custom-lang" class="wde-lang-input cdx-text-input__input wde-hidden" type="text" placeholder="lang e.g. en" maxlength="10" />',
+                '</div>',
+                '<div class="wde-form-row wde-form-row-val">',
+                '<div class="wde-ac-wrap">',
+                '<input id="wde-custom-val" class="wde-val-input cdx-text-input__input" type="text" placeholder="Enter value…" autocomplete="off" />',
+                '<div class="wde-ac-drop" hidden></div>',
+                '</div>',
+                '<div id="wde-custom-unit-wrap" class="wde-unit-wrap wde-hidden">',
+                '<span class="wde-unit-label">Unit:</span>',
+                '<div class="wde-ac-wrap wde-unit-ac-wrap">',
+                '<input id="wde-custom-unit" class="wde-unit-input cdx-text-input__input" type="text" placeholder="Search unit" autocomplete="off" />',
+                '<div class="wde-ac-drop wde-unit-drop" hidden></div>',
+                '</div>',
+                '</div>',
+                '<button id="wde-custom-save" class="wde-save-btn cdx-button cdx-button--action-progressive cdx-button--weight-primary">Add claim</button>',
+                '<button id="wde-custom-cancel" class="wde-cancel-btn cdx-button cdx-button--weight-quiet">Cancel</button>',
+                '</div>',
+                '<div id="wde-custom-msg" class="wde-form-msg" hidden></div>',
+                '</div>'
+            ].join('') : ''),
+
             '<div class="wde-table-wrap">',
             '<table id="wde-table" class="wde-table">',
             '<thead><tr>',
@@ -585,8 +626,9 @@
             '</tr></thead>',
             '<tbody id="wde-tbody"></tbody>',
             '</table>',
-            '</div>',
-            '</div>',
+            '</div>', // .wde-table-wrap
+
+            '</div>', // #wde-content
             '</div>',
 
             '</div>',  // #wde-dialog
@@ -606,7 +648,11 @@
         let activeFilter = 'all';
         let searchTerm = '';
 
-        // ── Open / close ─────────────────────────────────────────────
+        // ── Open / close / drag ──────────────────────────────────────
+        let isDragging = false;
+        let currentX, currentY, initialX, initialY;
+        let xOffset = 0, yOffset = 0;
+
         function openDialog(qid) {
             // Reset state
             showLoading('Loading…');
@@ -621,6 +667,9 @@
             $('.wde-fbtn').removeClass('wde-active');
             $('.wde-fbtn[data-f="all"]').addClass('wde-active');
 
+            xOffset = 0; yOffset = 0;
+            $('#wde-dialog').css('transform', '').removeClass('wde-minimized');
+
             overlay.classList.add('wde-visible');
             loadItem(qid);
         }
@@ -628,9 +677,42 @@
         function closeDialog() { overlay.classList.remove('wde-visible'); }
 
         $('#wde-close').on('click', closeDialog);
+        $('#wde-minimize').on('click', () => $('#wde-dialog').toggleClass('wde-minimized'));
+
+        // Close on overlay click (if not dragging)
         $overlay.on('click', e => { if (e.target === overlay) closeDialog(); });
         $(document).on('keydown', e => {
             if (e.key === 'Escape' && overlay.classList.contains('wde-visible')) closeDialog();
+        });
+
+        $('#wde-header').on('mousedown', function (e) {
+            if ($(e.target).closest('button, a').length) return;
+            initialX = e.clientX - xOffset;
+            initialY = e.clientY - yOffset;
+            isDragging = true;
+            $overlay.css('user-select', 'none');
+            $('#wde-header').css('cursor', 'grabbing');
+        });
+
+        $(window).on('mousemove.wdedrag', function (e) {
+            if (isDragging) {
+                e.preventDefault();
+                currentX = e.clientX - initialX;
+                currentY = e.clientY - initialY;
+                xOffset = currentX;
+                yOffset = currentY;
+                $('#wde-dialog').css('transform', 'translate3d(' + currentX + 'px, ' + currentY + 'px, 0)');
+            }
+        });
+
+        $(window).on('mouseup.wdedrag', function () {
+            if (isDragging) {
+                initialX = currentX;
+                initialY = currentY;
+                isDragging = false;
+                $overlay.css('user-select', '');
+                $('#wde-header').css('cursor', 'grab');
+            }
         });
 
         // ── Filter bar ───────────────────────────────────────────────
@@ -1499,6 +1581,113 @@
                     }
                 });
             });
+
+            // ── Custom statement form events ─────────────────────────
+            if (IS_LOGGED_IN) {
+                const $qf = $('#wde-custom-form');
+                const $addBtn = $('#wde-custom-addbtn');
+                const $cancelBtn = $('#wde-custom-cancel');
+                const $pidInput = $('#wde-custom-pid');
+                const $typeSel = $('#wde-custom-type');
+                const $langInput = $('#wde-custom-lang');
+                const $valInput = $('#wde-custom-val');
+                const $unitWrap = $('#wde-custom-unit-wrap');
+                const $unitInput = $('#wde-custom-unit');
+                const $saveBtn = $('#wde-custom-save');
+                const $msg = $('#wde-custom-msg');
+
+                attachPropAutocomplete($qf);
+
+                $addBtn.off('click').on('click', () => {
+                    $qf.removeClass('wde-hidden');
+                    $addBtn.addClass('wde-hidden');
+                    $pidInput.focus();
+                });
+
+                $cancelBtn.off('click').on('click', () => {
+                    $qf.addClass('wde-hidden');
+                    $addBtn.removeClass('wde-hidden');
+                    $pidInput.val('').removeData('resolved-pid');
+                    $valInput.val('').removeData('qid');
+                    $unitInput.val('').removeData('unit-qid');
+                    $msg.prop('hidden', true);
+                });
+
+                function updateCustomValInputType(t) {
+                    $langInput.toggleClass('wde-hidden', t !== 'monolingual');
+                    $unitWrap.toggleClass('wde-hidden', t !== 'quantity');
+                    if (t === 'item') {
+                        $valInput.attr({ type: 'text', placeholder: 'Search Wikidata item…' });
+                        attachAutocomplete($qf);
+                        attachUnitAutocomplete($qf);
+                    } else if (t === 'time') {
+                        $valInput.attr({ type: 'date', placeholder: '' });
+                        detachAutocomplete($qf);
+                    } else if (t === 'quantity') {
+                        $valInput.attr({ type: 'number', placeholder: 'Number e.g. 42', step: 'any' });
+                        detachAutocomplete($qf);
+                        attachUnitAutocomplete($qf);
+                    } else if (t === 'monolingual') {
+                        $valInput.attr({ type: 'text', placeholder: 'Text in chosen language' });
+                        detachAutocomplete($qf);
+                    } else {
+                        $valInput.attr({ type: 'text', placeholder: 'Enter value…' });
+                        detachAutocomplete($qf);
+                    }
+                }
+
+                $typeSel.off('change').on('change', function () { updateCustomValInputType($(this).val()); });
+                updateCustomValInputType($typeSel.val());
+
+                $saveBtn.off('click').on('click', async () => {
+                    const qpid = ($pidInput.data('resolved-pid') || $pidInput.val()).trim().toUpperCase();
+                    const type = $typeSel.val();
+                    const stored = type === 'item' ? $valInput.data('qid') : null;
+                    const raw = stored || $valInput.val();
+                    const lang = $langInput.val();
+                    const unit = $unitInput.data('unit-qid') || $unitInput.val().trim();
+
+                    if (!/^P\d+$/i.test(qpid)) {
+                        showMsg($msg, 'Select or enter a property ID like P580.', 'wde-err'); return;
+                    }
+                    $msg.prop('hidden', true).removeClass('wde-ok wde-err');
+                    let vo;
+                    try { vo = buildValueObj(type, raw, lang, unit); }
+                    catch (e) { showMsg($msg, e.message, 'wde-err'); return; }
+
+                    $saveBtn.prop('disabled', true).text('Saving…');
+                    try {
+                        await addClaim(qid, qpid, vo);
+                        showMsg($msg, '✓ Claim added!', 'wde-ok');
+                        setTimeout(async () => {
+                            // Reset form fields
+                            $pidInput.val('').removeData('resolved-pid');
+                            $valInput.val('').removeData('qid');
+                            $unitInput.val('').removeData('unit-qid');
+                            $msg.prop('hidden', true);
+                            $saveBtn.prop('disabled', false).text('Add claim');
+                            $qf.addClass('wde-hidden');
+                            $addBtn.removeClass('wde-hidden');
+
+                            // Re-render row or append new row dynamically
+                            let $row = $tbody.find('tr[data-pid="' + qpid + '"]');
+                            if (!$row.length) {
+                                const propLabels = await batchLabels([qpid]);
+                                const newRowHtml = propRowHtml(qpid, propLabels[qpid] || qpid, [], {}, qid, propLabels);
+                                $tbody.append(newRowHtml);
+                                $row = $tbody.find('tr[data-pid="' + qpid + '"]');
+                                retally();
+                            }
+                            await refreshPropValueDisplay(qid, qpid, $row);
+                            // scroll the new/updated row into view
+                            $row[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }, 1200);
+                    } catch (e) {
+                        showMsg($msg, '⚠ ' + e.message, 'wde-err');
+                        $saveBtn.prop('disabled', false).text('Add claim');
+                    }
+                });
+            }
         }
 
         function retally() {
@@ -1540,7 +1729,7 @@
 /* ── Overlay & dialog ─────────────────────────── */
 #wde-overlay {
     display:none; position:fixed; inset:0; z-index:10000;
-    background:rgba(0,0,0,.5);
+    background:rgba(0,0,0,.15);
     align-items:center; justify-content:center;
     padding:16px; box-sizing:border-box;
 }
@@ -1556,6 +1745,8 @@
     font-family:var(--font-family-base,-apple-system,'Linux Libertine',Georgia,serif);
     animation:wde-pop .15s ease-out;
 }
+#wde-dialog.wde-minimized #wde-body { display: none; }
+
 @keyframes wde-pop {
     from { opacity:0; transform:translateY(-10px) scale(.97); }
     to   { opacity:1; transform:none; }
@@ -1567,6 +1758,7 @@
     padding:9px 14px;
     background:var(--background-color-interactive-subtle,#eaecf0);
     border-bottom:1px solid var(--border-color-base,#a2a9b1);
+    cursor: grab;
 }
 .wde-logo { color:var(--color-progressive,#3366cc); display:flex; align-items:center; }
 .wde-htxt { flex:1; min-width:0; }
@@ -1836,6 +2028,16 @@ input[type="date"].wde-val-input { max-width:160px; }
 .wde-form-msg { margin-top:5px; font-size:.83rem; padding:3px 8px; border-radius:2px; }
 .wde-ok  { background:#d5fdf4; color:#14623d; border:1px solid #71d9b3; }
 .wde-err { background:#fce8e8; color:#b32424; border:1px solid #e87c7c; }
+
+/* ── Custom statement section ───────────────────── */
+.wde-custom-statement-section {
+    margin: 10px 14px;
+    padding-bottom: 5px;
+}
+.wde-custom-addbtn {
+    margin-bottom: 8px;
+    font-weight: 700;
+}
 ` ).appendTo('head');
     }
 
