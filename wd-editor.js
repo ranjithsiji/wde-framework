@@ -291,7 +291,7 @@
     //  VALUE BUILDER (for wbcreateclaim)
     // ─────────────────────────────────────────────────────────────────
 
-    function buildValueObj(type, raw, lang) {
+    function buildValueObj(type, raw, lang, unit) {
         const v = raw.trim();
         if (!v) throw new Error('Value cannot be empty.');
         switch (type) {
@@ -312,9 +312,14 @@
                     calendarmodel: 'http://www.wikidata.org/entity/Q1985727'
                 };
             }
-            case 'quantity':
+            case 'quantity': {
                 if (isNaN(parseFloat(v))) throw new Error('Must be a number.');
-                return { amount: (parseFloat(v) >= 0 ? '+' : '') + v, unit: '1' };
+                const unitQid = (unit || '').trim().toUpperCase();
+                const unitUri = unitQid && /^Q\d+$/.test(unitQid)
+                    ? 'http://www.wikidata.org/entity/' + unitQid
+                    : '1';
+                return { amount: (parseFloat(v) >= 0 ? '+' : '') + parseFloat(v), unit: unitUri };
+            }
             case 'monolingual': {
                 const l = (lang || '').trim() || PAGE_LANG;
                 if (!l) throw new Error('Language code required.');
@@ -823,6 +828,87 @@
             $fc.find('.wde-ac-drop').prop('hidden', true).empty();
         }
 
+        // Property-PID autocomplete (searches wbsearchentities type=property)
+        function attachPropAutocomplete($qf) {
+            const $input = $qf.find('.wde-qpid-input');
+            let $drop = $qf.find('.wde-qpid-drop');
+            if (!$drop.length) {
+                $drop = $('<div class="wde-ac-drop wde-qpid-drop" hidden></div>');
+                $input.after($drop);
+                $input.parent().css('position', 'relative');
+            }
+            $input.off('.wdepac').on('input.wdepac', function () {
+                const q = $(this).val().trim();
+                $input.removeData('resolved-pid');
+                clearTimeout(acTimer);
+                if (q.length < 2) { $drop.prop('hidden', true).empty(); return; }
+                acTimer = setTimeout(async () => {
+                    try {
+                        const d = await $.ajax({
+                            url: WD_API, dataType: 'json',
+                            data: {
+                                action: 'wbsearchentities', search: q,
+                                language: PAGE_LANG, uselang: PAGE_LANG,
+                                type: 'property', limit: 8, format: 'json',
+                                origin: '*'
+                            }
+                        });
+                        $drop.empty().prop('hidden', false);
+                        (d.search || []).forEach(r => {
+                            $('<div class="wde-ac-item"></div>')
+                                .html('<strong>' + mw.html.escape(r.id) + '</strong> ' +
+                                    mw.html.escape(r.label || r.id) +
+                                    (r.description ? ' <em>' + mw.html.escape(r.description) + '</em>' : ''))
+                                .on('mousedown', function (e) {
+                                    e.preventDefault();
+                                    $input.val(r.id).data('resolved-pid', r.id);
+                                    $drop.prop('hidden', true).empty();
+                                })
+                                .appendTo($drop);
+                        });
+                        if (!d.search || !d.search.length) $drop.prop('hidden', true);
+                    } catch (_) { /* silent */ }
+                }, 280);
+            });
+            $input.on('blur.wdepac', () =>
+                setTimeout(() => $drop.prop('hidden', true).empty(), 200)
+            );
+        }
+
+        // Unit entity autocomplete (searches items, stores QID as data-unit-qid)
+        function attachUnitAutocomplete($qf) {
+            const $input = $qf.find('.wde-unit-input');
+            const $drop = $qf.find('.wde-unit-drop');
+            if (!$input.length) return;
+            $input.off('.wdeunit').on('input.wdeunit', function () {
+                const q = $(this).val().trim();
+                $input.removeData('unit-qid');
+                clearTimeout(acTimer);
+                if (q.length < 2) { $drop.prop('hidden', true).empty(); return; }
+                acTimer = setTimeout(async () => {
+                    try {
+                        const results = await searchEntities(q);
+                        $drop.empty().prop('hidden', false);
+                        results.forEach(r => {
+                            $('<div class="wde-ac-item"></div>')
+                                .html(mw.html.escape(r.label || r.id) +
+                                    (r.description ? ' <em>' + mw.html.escape(r.description) + '</em>' : ''))
+                                .on('mousedown', function (e) {
+                                    e.preventDefault();
+                                    $input.val(r.label || r.id).data('unit-qid', r.id);
+                                    $drop.prop('hidden', true).empty();
+                                })
+                                .appendTo($drop);
+                        });
+                        if (!results.length) $drop.prop('hidden', true);
+                    } catch (_) { /* silent */ }
+                }, 280);
+            });
+            $input.on('blur.wdeunit', () =>
+                setTimeout(() => $drop.prop('hidden', true).empty(), 200)
+            );
+        }
+
         // ── Inline add-value form events ─────────────────────────────
         function wireFormEvents(qid) {
             $tbody.off('click.wde').on('click.wde', '.wde-addbtn', function () {
@@ -1011,7 +1097,7 @@
                 const $row = $btn.closest('tr.wde-row');
                 const pid = $row.data('pid');
 
-                $tbody.find('.wde-qual-inline').remove();
+                $tbody.find('.wde-qual-inline').closest('tr.wde-qual-inline-row').remove();
 
                 const typeMap = {
                     'wikibase-entityid': 'item', 'time': 'time',
@@ -1020,53 +1106,99 @@
                 const formType = typeMap[dtype] || 'string';
 
                 const $qf = $('<div class="wde-form wde-qual-inline"></div>');
+
+                // ── Row 1: type selector + lang ───────────────────────
+                const $typeSel = $('<select class="wde-type-sel cdx-select"></select>').append(
+                    $('<option>', { value: 'string', text: 'String / ID' }),
+                    $('<option>', { value: 'item', text: 'Wikidata item' }),
+                    $('<option>', { value: 'time', text: 'Date' }),
+                    $('<option>', { value: 'quantity', text: 'Quantity / Number' }),
+                    $('<option>', { value: 'monolingual', text: 'Monolingual text' })
+                ).val(formType);
+                const $langInput = $('<input class="wde-lang-input cdx-text-input__input wde-hidden"' +
+                    ' type="text" placeholder="lang e.g. en" maxlength="10" />').val(rawLang);
                 $qf.append(
-                    $('<div class="wde-form-row wde-form-row-type"></div>').append(
-                        $('<select class="wde-type-sel cdx-select"></select>').append(
-                            $('<option>', { value: 'string', text: 'String / ID' }),
-                            $('<option>', { value: 'item', text: 'Wikidata item' }),
-                            $('<option>', { value: 'time', text: 'Date' }),
-                            $('<option>', { value: 'quantity', text: 'Quantity' }),
-                            $('<option>', { value: 'monolingual', text: 'Monolingual text' })
-                        ).val(formType),
-                        $('<input class="wde-lang-input cdx-text-input__input' +
-                            (formType === 'monolingual' ? '' : ' wde-hidden') + '"' +
-                            ' type="text" placeholder="lang e.g. en" maxlength="10" />').val(rawLang)
-                    ),
-                    $('<div class="wde-form-row wde-form-row-val"></div>').append(
-                        $('<div class="wde-ac-wrap"></div>').append(
-                            $('<input class="wde-val-input cdx-text-input__input" type="text" autocomplete="off" />')
-                                .val(rawVal)
-                                .data('qid', formType === 'item' ? rawVal : undefined),
-                            $('<div class="wde-ac-drop" hidden></div>')
-                        ),
-                        $('<button class="wde-save-btn cdx-button cdx-button--action-progressive cdx-button--weight-primary">Update</button>'),
-                        $('<button class="wde-cancel-btn cdx-button cdx-button--weight-quiet">Cancel</button>')
-                    ),
-                    $('<div class="wde-form-msg" hidden></div>')
+                    $('<div class="wde-form-row wde-form-row-type"></div>')
+                        .append($typeSel, $langInput)
                 );
-                $td.after($('<td></td>').append($qf));
-                // Actually append as a new row below
+
+                // ── Row 2: value input (dynamic) + unit + buttons ─────
+                const $valRow = $('<div class="wde-form-row wde-form-row-val"></div>');
+                const $valAcWrap = $('<div class="wde-ac-wrap"></div>').append(
+                    $('<input class="wde-val-input cdx-text-input__input" type="text" autocomplete="off" />')
+                        .val(rawVal).data('qid', formType === 'item' ? rawVal : undefined),
+                    $('<div class="wde-ac-drop" hidden></div>')
+                );
+                const $unitWrap = $('<div class="wde-unit-wrap wde-hidden"></div>').append(
+                    $('<span class="wde-unit-label">Unit:</span>'),
+                    $('<div class="wde-ac-wrap wde-unit-ac-wrap"></div>').append(
+                        $('<input class="wde-unit-input cdx-text-input__input" type="text"' +
+                            ' placeholder="Search unit (e.g. kilogram)" autocomplete="off" />'),
+                        $('<div class="wde-ac-drop wde-unit-drop" hidden></div>')
+                    )
+                );
+                $valRow.append(
+                    $valAcWrap, $unitWrap,
+                    $('<button class="wde-save-btn cdx-button cdx-button--action-progressive cdx-button--weight-primary">Update</button>'),
+                    $('<button class="wde-cancel-btn cdx-button cdx-button--weight-quiet">Cancel</button>')
+                );
+                $qf.append($valRow, $('<div class="wde-form-msg" hidden></div>'));
+
                 $td.closest('tr.wde-qual-row').after(
                     $('<tr class="wde-qual-inline-row"><td colspan="2"></td></tr>')
                         .find('td').append($qf).end()
                 );
-                $td.closest('tr.wde-qual-row').next().find('.wde-save-btn').on('click', async () => {
-                    const $f = $qf;
-                    const type = $f.find('.wde-type-sel').val();
-                    const stored = type === 'item' ? $f.find('.wde-val-input').data('qid') : null;
-                    const raw = stored || $f.find('.wde-val-input').val();
-                    const lang = $f.find('.wde-lang-input').val();
-                    const $msg = $f.find('.wde-form-msg');
-                    const $sav = $f.find('.wde-save-btn');
+
+                const $valInput = $qf.find('.wde-val-input');
+
+                // Helper: update val input type/placeholder and extra fields
+                function updateValInputType(t) {
+                    $langInput.toggleClass('wde-hidden', t !== 'monolingual');
+                    $unitWrap.toggleClass('wde-hidden', t !== 'quantity');
+                    if (t === 'item') {
+                        $valInput.attr({ type: 'text', placeholder: 'Search Wikidata item…' });
+                        attachAutocomplete($qf);
+                        attachUnitAutocomplete($qf);
+                    } else if (t === 'time') {
+                        $valInput.attr({ type: 'date', placeholder: '' });
+                        detachAutocomplete($qf);
+                    } else if (t === 'quantity') {
+                        $valInput.attr({ type: 'number', placeholder: 'Number e.g. 42', step: 'any' });
+                        detachAutocomplete($qf);
+                        attachUnitAutocomplete($qf);
+                    } else if (t === 'monolingual') {
+                        $valInput.attr({ type: 'text', placeholder: 'Text in chosen language' });
+                        detachAutocomplete($qf);
+                    } else {
+                        $valInput.attr({ type: 'text', placeholder: 'Enter value…' });
+                        detachAutocomplete($qf);
+                    }
+                }
+
+                $typeSel.on('change', function () { updateValInputType($(this).val()); });
+                updateValInputType($typeSel.val());
+
+                $qf.find('.wde-cancel-btn').on('click', () => $qf.closest('tr').remove());
+
+                $qf.find('.wde-save-btn').on('click', async () => {
+                    const type = $typeSel.val();
+                    const stored = type === 'item' ? $valInput.data('qid') : null;
+                    const raw = stored || $valInput.val();
+                    const lang = $langInput.val();
+                    const unit = $qf.find('.wde-unit-input').data('unit-qid') ||
+                        $qf.find('.wde-unit-input').val().trim();
+                    const $msg = $qf.find('.wde-form-msg');
+                    const $sav = $qf.find('.wde-save-btn');
+
                     $msg.prop('hidden', true).removeClass('wde-ok wde-err');
                     let vo;
-                    try { vo = buildValueObj(type, raw, lang); }
+                    try { vo = buildValueObj(type, raw, lang, unit); }
                     catch (e) { showMsg($msg, e.message, 'wde-err'); return; }
-                    $sav.prop('disabled', true).text('Saving\u2026');
+
+                    $sav.prop('disabled', true).text('Saving…');
                     try {
                         await editQualifier(guid, qpid, vo, hash);
-                        showMsg($msg, '\u2713 Updated!', 'wde-ok');
+                        showMsg($msg, '✓ Updated!', 'wde-ok');
                         setTimeout(async () => {
                             $qf.closest('tr').remove();
                             await refreshPropValueDisplay(
@@ -1074,13 +1206,10 @@
                             );
                         }, 1200);
                     } catch (e) {
-                        showMsg($msg, '\u26a0 ' + e.message, 'wde-err');
+                        showMsg($msg, '⚠ ' + e.message, 'wde-err');
                         $sav.prop('disabled', false).text('Update');
                     }
                 });
-                $td.closest('tr.wde-qual-row').next().find('.wde-cancel-btn')
-                    .on('click', () => $qf.closest('tr').remove());
-                if (formType === 'item') attachAutocomplete($qf);
             });
 
             // \u2500\u2500 Qualifier: add \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -1094,75 +1223,110 @@
 
                 const $qf = $('<div class="wde-form wde-qual-new-form"></div>');
 
-                // Row 0: qualifier property PID input
+                // ── Row 0: property PID with autocomplete ─────────────
+                const $pidWrap = $('<div class="wde-form-row wde-form-row-type wde-qpid-wrap"></div>');
+                $pidWrap.append(
+                    $('<input class="wde-qpid-input cdx-text-input__input" type="text"' +
+                        ' placeholder="Qualifier property (e.g. start time / P580)" />')
+                );
+                $qf.append($pidWrap);
+
+                // ── Row 1: type selector + lang ───────────────────────
+                const $typeSel = $('<select class="wde-type-sel cdx-select"></select>').append(
+                    $('<option>', { value: 'string', text: 'String / ID' }),
+                    $('<option>', { value: 'item', text: 'Wikidata item' }),
+                    $('<option>', { value: 'time', text: 'Date' }),
+                    $('<option>', { value: 'quantity', text: 'Quantity / Number' }),
+                    $('<option>', { value: 'monolingual', text: 'Monolingual text' })
+                );
+                const $langInput = $('<input class="wde-lang-input cdx-text-input__input wde-hidden"' +
+                    ' type="text" placeholder="lang e.g. en" maxlength="10" />');
                 $qf.append(
-                    $('<div class="wde-form-row wde-form-row-type"></div>').append(
-                        $('<input class="wde-qpid-input cdx-text-input__input" type="text"' +
-                            ' placeholder="Qualifier property (e.g. P580)" maxlength="12" />')
+                    $('<div class="wde-form-row wde-form-row-type"></div>')
+                        .append($typeSel, $langInput)
+                );
+
+                // ── Row 2: value input (dynamic) + unit + buttons ─────
+                const $valRow = $('<div class="wde-form-row wde-form-row-val"></div>');
+                const $valAcWrap = $('<div class="wde-ac-wrap"></div>').append(
+                    $('<input class="wde-val-input cdx-text-input__input" type="text"' +
+                        ' placeholder="Enter value…" autocomplete="off" />'),
+                    $('<div class="wde-ac-drop" hidden></div>')
+                );
+                const $unitWrap = $('<div class="wde-unit-wrap wde-hidden"></div>').append(
+                    $('<span class="wde-unit-label">Unit:</span>'),
+                    $('<div class="wde-ac-wrap wde-unit-ac-wrap"></div>').append(
+                        $('<input class="wde-unit-input cdx-text-input__input" type="text"' +
+                            ' placeholder="Search unit (e.g. kilogram)" autocomplete="off" />'),
+                        $('<div class="wde-ac-drop wde-unit-drop" hidden></div>')
                     )
                 );
-                // Row 1: type selector
-                $qf.append(
-                    $('<div class="wde-form-row wde-form-row-type"></div>').append(
-                        $('<select class="wde-type-sel cdx-select"></select>').append(
-                            $('<option>', { value: 'string', text: 'String / ID' }),
-                            $('<option>', { value: 'item', text: 'Wikidata item' }),
-                            $('<option>', { value: 'time', text: 'Date' }),
-                            $('<option>', { value: 'quantity', text: 'Quantity' }),
-                            $('<option>', { value: 'monolingual', text: 'Monolingual text' })
-                        ),
-                        $('<input class="wde-lang-input cdx-text-input__input wde-hidden"' +
-                            ' type="text" placeholder="lang e.g. en" maxlength="10" />')
-                    )
+                $valRow.append(
+                    $valAcWrap, $unitWrap,
+                    $('<button class="wde-save-btn cdx-button cdx-button--action-progressive cdx-button--weight-primary">Add</button>'),
+                    $('<button class="wde-cancel-btn cdx-button cdx-button--weight-quiet">Cancel</button>')
                 );
-                // Row 2: value + buttons
-                $qf.append(
-                    $('<div class="wde-form-row wde-form-row-val"></div>').append(
-                        $('<div class="wde-ac-wrap"></div>').append(
-                            $('<input class="wde-val-input cdx-text-input__input" type="text"' +
-                                ' placeholder="Enter value\u2026" autocomplete="off" />'),
-                            $('<div class="wde-ac-drop" hidden></div>')
-                        ),
-                        $('<button class="wde-save-btn cdx-button cdx-button--action-progressive cdx-button--weight-primary">Add</button>'),
-                        $('<button class="wde-cancel-btn cdx-button cdx-button--weight-quiet">Cancel</button>')
-                    ),
-                    $('<div class="wde-form-msg" hidden></div>')
-                );
+                $qf.append($valRow, $('<div class="wde-form-msg" hidden></div>'));
 
                 $li.find('.wde-quals').append($qf);
 
-                const $typeSel = $qf.find('.wde-type-sel');
-                const $valInput = $qf.find('.wde-val-input');
-                $typeSel.on('change', function () {
-                    const t = $(this).val();
-                    $qf.find('.wde-lang-input').toggleClass('wde-hidden', t !== 'monolingual');
-                    if (t === 'item') { attachAutocomplete($qf); }
-                    else { detachAutocomplete($qf); }
-                });
+                // Wire property autocomplete
+                attachPropAutocomplete($qf);
 
+                const $valInput = $qf.find('.wde-val-input');
+
+                // Helper: update val input type/placeholder and extra fields
+                function updateValInputType(t) {
+                    $langInput.toggleClass('wde-hidden', t !== 'monolingual');
+                    $unitWrap.toggleClass('wde-hidden', t !== 'quantity');
+                    if (t === 'item') {
+                        $valInput.attr({ type: 'text', placeholder: 'Search Wikidata item…' });
+                        attachAutocomplete($qf);
+                        attachUnitAutocomplete($qf);
+                    } else if (t === 'time') {
+                        $valInput.attr({ type: 'date', placeholder: '' });
+                        detachAutocomplete($qf);
+                    } else if (t === 'quantity') {
+                        $valInput.attr({ type: 'number', placeholder: 'Number e.g. 42', step: 'any' });
+                        detachAutocomplete($qf);
+                        attachUnitAutocomplete($qf);
+                    } else if (t === 'monolingual') {
+                        $valInput.attr({ type: 'text', placeholder: 'Text in chosen language' });
+                        detachAutocomplete($qf);
+                    } else {
+                        $valInput.attr({ type: 'text', placeholder: 'Enter value…' });
+                        detachAutocomplete($qf);
+                    }
+                }
+
+                $typeSel.on('change', function () { updateValInputType($(this).val()); });
+                updateValInputType($typeSel.val());
                 $qf.find('.wde-cancel-btn').on('click', () => $qf.remove());
 
                 $qf.find('.wde-save-btn').on('click', async () => {
-                    const qpid = $qf.find('.wde-qpid-input').val().trim().toUpperCase();
+                    const qpid = ($qf.find('.wde-qpid-input').data('resolved-pid') ||
+                        $qf.find('.wde-qpid-input').val()).trim().toUpperCase();
                     const type = $typeSel.val();
                     const stored = type === 'item' ? $valInput.data('qid') : null;
                     const raw = stored || $valInput.val();
-                    const lang = $qf.find('.wde-lang-input').val();
+                    const lang = $langInput.val();
+                    const unit = $qf.find('.wde-unit-input').data('unit-qid') ||
+                        $qf.find('.wde-unit-input').val().trim();
                     const $msg = $qf.find('.wde-form-msg');
                     const $sav = $qf.find('.wde-save-btn');
 
                     if (!/^P\d+$/i.test(qpid)) {
-                        showMsg($msg, 'Enter a property ID like P580.', 'wde-err'); return;
+                        showMsg($msg, 'Select or enter a property ID like P580.', 'wde-err'); return;
                     }
                     $msg.prop('hidden', true).removeClass('wde-ok wde-err');
                     let vo;
-                    try { vo = buildValueObj(type, raw, lang); }
+                    try { vo = buildValueObj(type, raw, lang, unit); }
                     catch (e) { showMsg($msg, e.message, 'wde-err'); return; }
 
-                    $sav.prop('disabled', true).text('Saving\u2026');
+                    $sav.prop('disabled', true).text('Saving…');
                     try {
                         await addQualifier(guid, qpid, vo);
-                        showMsg($msg, '\u2713 Qualifier added!', 'wde-ok');
+                        showMsg($msg, '✓ Qualifier added!', 'wde-ok');
                         setTimeout(async () => {
                             $qf.remove();
                             await refreshPropValueDisplay(
@@ -1170,7 +1334,7 @@
                             );
                         }, 1200);
                     } catch (e) {
-                        showMsg($msg, '\u26a0 ' + e.message, 'wde-err');
+                        showMsg($msg, '⚠ ' + e.message, 'wde-err');
                         $sav.prop('disabled', false).text('Add');
                     }
                 });
@@ -1609,7 +1773,15 @@
 .wde-q-addbtn:hover { color:#004488; }
 .wde-qual-addbtn-row td { padding-top:3px; }
 .wde-qual-inline-row td { padding:4px 0; }
-.wde-qpid-input { max-width:200px; }
+.wde-qpid-input { width:100%; box-sizing:border-box; }
+.wde-qpid-wrap  { position:relative; }
+.wde-qpid-drop  { min-width:260px; }
+.wde-unit-wrap  { display:flex; align-items:center; gap:6px; margin-top:4px; flex-wrap:wrap; }
+.wde-unit-label { font-size:.8rem; color:#54595d; white-space:nowrap; }
+.wde-unit-ac-wrap { flex:1; min-width:140px; position:relative; }
+.wde-unit-input { width:100%; box-sizing:border-box; }
+.wde-unit-drop  { min-width:200px; }
+input[type="date"].wde-val-input { max-width:160px; }
 .wde-entlink { color:#3366cc; text-decoration:none; }
 .wde-entlink:hover { text-decoration:underline; }
 .wde-extlink { color:#3366cc; text-decoration:none; word-break:break-all; }
