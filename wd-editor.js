@@ -426,7 +426,8 @@
             '</li>';
     }
 
-    function propRowHtml(pid, propLabel, claimList, entLabels, qid) {
+    function propRowHtml(pid, propLabel, claimList, entLabels, qid, propLabels) {
+        propLabels = propLabels || {};
         const has = claimList && claimList.length > 0;
         const sCls = has ? 'wde-present' : 'wde-missing';
         const sLbl = has ? 'Present' : 'Missing';
@@ -444,7 +445,7 @@
         let valInner;
         if (has) {
             const items = claimList.slice(0, 6).map(
-                c => claimItemHtml(c, entLabels, {})
+                c => claimItemHtml(c, entLabels, propLabels)
             ).join('');
             const more = claimList.length > 6
                 ? '<li class="wde-overflow">+' + (claimList.length - 6) + ' more\u2026</li>' : '';
@@ -674,8 +675,12 @@
 
                 showLoading('Resolving ' + cfgPids.length + ' property labels…');
 
-                // Collect entity QIDs that appear as values, for label resolution
+                // Collect all QIDs needed for label resolution:
+                // - main snak entity values
+                // - qualifier entity values
+                // - qualifier property PIDs
                 const entQids = new Set();
+                const qualPids = new Set();
                 cfgPids.forEach(pid => {
                     (claims[pid] || []).forEach(c => {
                         const snak = c.mainsnak;
@@ -684,11 +689,22 @@
                             entQids.add(snak.datavalue.value.id ||
                                 'Q' + snak.datavalue.value['numeric-id']);
                         }
+                        // qualifier property PIDs and entity values
+                        Object.keys(c.qualifiers || {}).forEach(qpid => {
+                            qualPids.add(qpid);
+                            (c.qualifiers[qpid] || []).forEach(qs => {
+                                const qdv = qs.datavalue || {};
+                                if (qdv.type === 'wikibase-entityid' && qdv.value) {
+                                    entQids.add(qdv.value.id || ('Q' + qdv.value['numeric-id']));
+                                }
+                            });
+                        });
                     });
                 });
 
+                const allPids = [...new Set([...cfgPids, ...qualPids])];
                 const [propLabels, entLabels] = await Promise.all([
-                    batchLabels(cfgPids),
+                    batchLabels(allPids),
                     batchLabels([...entQids])
                 ]);
 
@@ -717,7 +733,7 @@
                 // Render rows
                 $tbody.html(cfgPids.map(pid =>
                     propRowHtml(pid, propLabels[pid] || pid,
-                        claims[pid] || [], entLabels, qid)
+                        claims[pid] || [], entLabels, qid, propLabels)
                 ).join(''));
 
                 $status.hide();
