@@ -347,12 +347,16 @@
             ' data-qid="' + mw.html.escape(qid) + '">' +
             (has ? '+ Add another' : '+ Add value') + '</button>'
             : '<span class="wde-loginnote">Log in to edit</span>';
+        const refreshBtn =
+            '<button class="wde-refreshbtn" title="Refresh values from Wikidata"' +
+            ' data-pid="' + mw.html.escape(pid) + '"' +
+            ' data-qid="' + mw.html.escape(qid) + '">&#8635;</button>';
         const valCell =
             '<td class="wde-cell wde-col-val">' +
             '<div class="wde-val-display">' + valInner + '</div>' +
-            '<div class="wde-val-action">' + addBtn + '</div>' +
+            '<div class="wde-val-action">' + addBtn + refreshBtn + '</div>' +
             '<div class="wde-val-form"></div>' +
-            '</td>';
+            '</td>';;
 
         // Status cell
         const statusCell =
@@ -752,24 +756,15 @@
                         await addClaim(qid, pid, valueObj);
                         showMsg($msg, '✓ Saved to Wikidata!', 'wde-ok');
 
-                        // Update row status + value display
+                        // Re-fetch and fully re-render the value cell
+                        await refreshPropValueDisplay(qid, pid, $row);
+
+                        // Ensure the status chip is up to date
                         $row.find('.wde-status-chip')
                             .removeClass('wde-missing').addClass('wde-present')
                             .text('Present');
-                        $row.find('.wde-val-display').html(
-                            '<ul class="wde-vlist"><li>' +
-                            '<span class="wde-str">' + mw.html.escape(display) + '</span>' +
-                            ' <em class="wde-saved">(reload for full value)</em>' +
-                            '</li></ul>'
-                        );
-
-                        // Retally summary
-                        const np = $tbody.find('.wde-present').length;
-                        const nm = $tbody.find('.wde-missing').length;
-                        $summary.html(
-                            '<span class="wde-sp">' + np + ' present</span>' +
-                            ' · <span class="wde-sm">' + nm + ' missing</span>'
-                        );
+                        $row.find('.wde-addbtn').text('+ Add another');
+                        retally();
 
                         clearTimeout(acTimer);
                         setTimeout(() => $fc.empty(), 2000);
@@ -779,6 +774,93 @@
                     }
                 });
             }); // end .wde-addbtn click
+
+            // ── Refresh button ────────────────────────────────────
+            $tbody.on('click.wde-refresh', '.wde-refreshbtn', async function () {
+                const $btn = $(this);
+                const pid = $btn.data('pid');
+                const qid = $btn.data('qid');
+                const $row = $btn.closest('tr.wde-row');
+                $btn.addClass('wde-refreshbtn--spinning').prop('disabled', true);
+                await refreshPropValueDisplay(qid, pid, $row);
+                $btn.removeClass('wde-refreshbtn--spinning').prop('disabled', false);
+                // Update status chip based on re-fetched content
+                const hasVals = $row.find('.wde-vlist li:not(.wde-overflow)').length > 0;
+                $row.find('.wde-status-chip')
+                    .toggleClass('wde-present', hasVals)
+                    .toggleClass('wde-missing', !hasVals)
+                    .text(hasVals ? 'Present' : 'Missing');
+                $row.find('.wde-addbtn').text(hasVals ? '+ Add another' : '+ Add value');
+                retally();
+            });
+
+            // ── Helper: refresh the value display for one property by re-fetching ──
+            async function refreshPropValueDisplay(qid, pid, $row) {
+                try {
+                    const d = await wdApi({
+                        action: 'wbgetentities',
+                        ids: qid,
+                        props: 'claims|labels',
+                        languages: PAGE_LANG + '|en'
+                    });
+                    const entity = (d.entities || {})[qid] || {};
+                    const claims = entity.claims || {};
+                    const claimList = claims[pid] || [];
+
+                    // Gather any entity IDs in these claims for label lookup
+                    const ids = [];
+                    claimList.forEach(c => {
+                        const dv = (c.mainsnak || {}).datavalue || {};
+                        if (dv.type === 'wikibase-entityid' && dv.value) {
+                            ids.push(dv.value.id || ('Q' + dv.value['numeric-id']));
+                        }
+                    });
+                    const entLabels = ids.length ? await batchLabels(ids) : {};
+
+                    // Re-build the inner HTML exactly as propRowHtml does
+                    let valInner;
+                    if (claimList.length) {
+                        const items = claimList.slice(0, 6).map(c => {
+                            const snak = c.mainsnak;
+                            const dv = snak.datavalue || {};
+                            const dtype = dv.type || 'string';
+                            let rawVal = '', rawLang = '';
+                            if (dtype === 'string') { rawVal = dv.value || ''; }
+                            else if (dtype === 'wikibase-entityid') {
+                                rawVal = dv.value ? (dv.value.id || ('Q' + dv.value['numeric-id'])) : '';
+                            } else if (dtype === 'time') {
+                                const t = (dv.value && dv.value.time) ? dv.value.time.replace(/^\+/, '') : '';
+                                const p = dv.value ? dv.value.precision : 11;
+                                rawVal = p >= 11 ? t.slice(0, 10) : p === 10 ? t.slice(0, 7) : t.slice(0, 4);
+                            } else if (dtype === 'quantity') { rawVal = dv.value ? dv.value.amount.replace(/^\+/, '') : ''; }
+                            else if (dtype === 'monolingualtext') {
+                                rawVal = dv.value ? dv.value.text : '';
+                                rawLang = dv.value ? dv.value.language : '';
+                            } else { rawVal = JSON.stringify(dv.value || ''); }
+
+                            const editBtns = IS_LOGGED_IN
+                                ? ' <button class="wde-editbtn" title="Edit this value"' +
+                                ' data-guid="' + mw.html.escape(c.id || '') + '"' +
+                                ' data-dtype="' + mw.html.escape(dtype) + '"' +
+                                ' data-raw="' + mw.html.escape(rawVal) + '"' +
+                                ' data-lang="' + mw.html.escape(rawLang) + '">✎</button>' +
+                                ' <button class="wde-delbtn" title="Delete this value"' +
+                                ' data-guid="' + mw.html.escape(c.id || '') + '">✕</button>'
+                                : '';
+                            return '<li data-guid="' + mw.html.escape(c.id || '') + '">' +
+                                snakHtml(snak, entLabels) + editBtns + '</li>';
+                        }).join('');
+                        const more = claimList.length > 6
+                            ? '<li class="wde-overflow">+' + (claimList.length - 6) + ' more…</li>' : '';
+                        valInner = '<ul class="wde-vlist">' + items + more + '</ul>';
+                    } else {
+                        valInner = '<span class="wde-empty">—</span>';
+                    }
+                    $row.find('.wde-val-display').html(valInner);
+                } catch (_e) {
+                    // Fallback: just leave the display as-is if the refresh fails
+                }
+            }
 
             // ── Delete button ─────────────────────────────────────────
             $tbody.on('click.wde-del', '.wde-delbtn', async function () {
@@ -1195,10 +1277,21 @@
 .wde-empty    { color:#a2a9b1; font-style:italic; }
 .wde-overflow { font-size:.78rem; color:#72777d; font-style:italic; }
 .wde-saved    { font-size:.76rem; color:#14623d; font-style:italic; }
-.wde-val-action { margin-top:5px; }
+.wde-val-action { margin-top:5px; display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
 .wde-addbtn   { font-size:.79rem; padding:2px 9px; }
 .wde-loginnote { font-size:.79rem; color:#72777d; }
 .wde-val-form { margin-top:7px; }
+.wde-refreshbtn {
+    display:inline-flex; align-items:center; justify-content:center;
+    width:22px; height:22px; padding:0; border-radius:50%;
+    border:1px solid #a2a9b1; background:transparent;
+    color:#54595d; font-size:14px; line-height:1; cursor:pointer;
+    transition:background .15s, color .15s, transform .15s;
+}
+.wde-refreshbtn:hover { background:#eaf3ff; color:#3366cc; border-color:#3366cc; }
+.wde-refreshbtn:disabled { opacity:.45; cursor:default; }
+@keyframes wde-spin { to { transform:rotate(360deg); } }
+.wde-refreshbtn--spinning { animation:wde-spin .7s linear infinite; }
 
 /* ── Status column ────────────────────────────── */
 .wde-col-status { text-align:center; white-space:nowrap; }
