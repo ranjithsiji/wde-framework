@@ -16,7 +16,10 @@
  *   If WDE_CONFIG_PAGE is set, it takes priority over the embedded config.
  *   The page must contain valid JSON in the same format as configs.json.
  *
- * Shortcut: Alt+Shift+E
+ * Shortcut: Alt+Shift+B
+ * ==========================================
+ * LICENSE : GNU GPL v3
+ * ==========================================
  */
 /* global mediaWiki, jQuery */
 (function (mw, $) {
@@ -2486,7 +2489,7 @@ input[type="date"].wde-val-input { max-width:160px; }
         const portlet = document.getElementById('p-cactions') ? 'p-cactions' : 'p-tb';
         const $link = $(mw.util.addPortletLink(
             portlet, '#', 'Wikidata editor', 't-wikidata-editor',
-            'Edit Wikidata statements for this article (Alt+Shift+E)', 'E'
+            'Edit Wikidata statements for this article (Alt+Shift+B)', 'B'
         ));
         if (!$link.length) return;
         $link.on('click', e => {
