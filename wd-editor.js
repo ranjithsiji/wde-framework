@@ -585,7 +585,11 @@
                 const nPresent = cfgPids.filter(p => claims[p] && claims[p].length).length;
                 const nMissing = cfgPids.length - nPresent;
 
-                $('#wde-qid-chip').text(qid).prop('hidden', false);
+                $('#wde-qid-chip').html(
+                    '<a href="https://www.wikidata.org/wiki/' + mw.html.escape(qid) + '"' +
+                    ' target="_blank" rel="noopener" class="wde-qid-link">' +
+                    mw.html.escape(qid) + '</a>'
+                ).prop('hidden', false);
                 if (et) $('#wde-type-chip').text(et.id).prop('hidden', false);
                 $('#wde-subtitle').text(itemLabel + (itemDesc ? ' — ' + itemDesc : ''));
                 $summary.html(
@@ -1024,6 +1028,8 @@
     border:1px solid #6699cc;
 }
 .wde-chip-type { background:#fef8e7; color:#7a5c00; border-color:#c8a000; font-family:inherit; }
+.wde-qid-link { color:inherit; text-decoration:none; }
+.wde-qid-link:hover { text-decoration:underline; }
 
 /* ── Codex-style buttons ──────────────────────── */
 .cdx-button {
