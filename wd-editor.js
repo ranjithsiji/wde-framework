@@ -158,6 +158,47 @@
         return d;
     }
 
+    async function addQualifier(guid, qpid, valueObj) {
+        const d = await wdForeignApi.postWithToken('csrf', {
+            action: 'wbsetqualifier',
+            claim: guid,
+            property: qpid,
+            snaktype: 'value',
+            value: JSON.stringify(valueObj),
+            summary: 'Add qualifier via Codex WDE',
+            format: 'json'
+        });
+        if (d.error) throw new Error(d.error.info);
+        return d;
+    }
+
+    async function editQualifier(guid, qpid, valueObj, snakhash) {
+        const d = await wdForeignApi.postWithToken('csrf', {
+            action: 'wbsetqualifier',
+            claim: guid,
+            property: qpid,
+            snaktype: 'value',
+            value: JSON.stringify(valueObj),
+            snakhash: snakhash,
+            summary: 'Edit qualifier via Codex WDE',
+            format: 'json'
+        });
+        if (d.error) throw new Error(d.error.info);
+        return d;
+    }
+
+    async function removeQualifier(guid, snakhash) {
+        const d = await wdForeignApi.postWithToken('csrf', {
+            action: 'wbremovequalifiers',
+            claim: guid,
+            qualifiers: snakhash,
+            summary: 'Remove qualifier via Codex WDE',
+            format: 'json'
+        });
+        if (d.error) throw new Error(d.error.info);
+        return d;
+    }
+
     // ─────────────────────────────────────────────────────────────────
     //  CONFIG FETCH  (called at boot if WDE_CONFIG_PAGE is defined)
     //  Uses the local MediaWiki API — no cross-origin issues.
@@ -284,8 +325,106 @@
     }
 
     // ─────────────────────────────────────────────────────────────────
-    //  TABLE ROW:  Property (label + (PID))  |  Value  |  Status
+    //  SHARED HELPER: render one claim <li> with qualifiers
     // ─────────────────────────────────────────────────────────────────
+
+    function claimItemHtml(c, entLabels, propLabels) {
+        const snak = c.mainsnak;
+        const dv = snak.datavalue || {};
+        const dtype = dv.type || 'string';
+        const guid = c.id || '';
+
+        // Extract editable raw value for the edit form
+        let rawVal = '', rawLang = '';
+        if (dtype === 'string') { rawVal = dv.value || ''; }
+        else if (dtype === 'wikibase-entityid') {
+            rawVal = dv.value ? (dv.value.id || ('Q' + dv.value['numeric-id'])) : '';
+        } else if (dtype === 'time') {
+            const t = (dv.value && dv.value.time) ? dv.value.time.replace(/^\+/, '') : '';
+            const p = dv.value ? dv.value.precision : 11;
+            rawVal = p >= 11 ? t.slice(0, 10) : p === 10 ? t.slice(0, 7) : t.slice(0, 4);
+        } else if (dtype === 'quantity') { rawVal = dv.value ? dv.value.amount.replace(/^\+/, '') : ''; }
+        else if (dtype === 'monolingualtext') {
+            rawVal = dv.value ? dv.value.text : '';
+            rawLang = dv.value ? dv.value.language : '';
+        } else { rawVal = JSON.stringify(dv.value || ''); }
+
+        const editBtns = IS_LOGGED_IN
+            ? ' <button class="wde-editbtn" title="Edit this value"' +
+            ' data-guid="' + mw.html.escape(guid) + '"' +
+            ' data-dtype="' + mw.html.escape(dtype) + '"' +
+            ' data-raw="' + mw.html.escape(rawVal) + '"' +
+            ' data-lang="' + mw.html.escape(rawLang) + '">✎</button>' +
+            ' <button class="wde-delbtn" title="Delete this value"' +
+            ' data-guid="' + mw.html.escape(guid) + '">✕</button>'
+            : '';
+
+        // ── Qualifiers sub-block ──────────────────────────────────────
+        let qualsHtml = '';
+        const order = c['qualifiers-order'] || Object.keys(c.qualifiers || {});
+        if (order.length) {
+            const rows = order.map(qpid => {
+                const snaks = (c.qualifiers || {})[qpid] || [];
+                return snaks.map(qs => {
+                    const qdv = qs.datavalue || {};
+                    const qdtype = qdv.type || 'string';
+                    let qRaw = '', qLang = '';
+                    if (qdtype === 'string') { qRaw = qdv.value || ''; }
+                    else if (qdtype === 'wikibase-entityid') {
+                        qRaw = qdv.value ? (qdv.value.id || ('Q' + qdv.value['numeric-id'])) : '';
+                    } else if (qdtype === 'time') {
+                        const qt = (qdv.value && qdv.value.time) ? qdv.value.time.replace(/^\+/, '') : '';
+                        const qp = qdv.value ? qdv.value.precision : 11;
+                        qRaw = qp >= 11 ? qt.slice(0, 10) : qp === 10 ? qt.slice(0, 7) : qt.slice(0, 4);
+                    } else if (qdtype === 'quantity') { qRaw = qdv.value ? qdv.value.amount.replace(/^\+/, '') : ''; }
+                    else if (qdtype === 'monolingualtext') {
+                        qRaw = qdv.value ? qdv.value.text : '';
+                        qLang = qdv.value ? qdv.value.language : '';
+                    }
+                    const qLabel = propLabels[qpid] || qpid;
+                    const qBtns = IS_LOGGED_IN
+                        ? ' <button class="wde-q-editbtn" title="Edit qualifier"' +
+                        ' data-guid="' + mw.html.escape(guid) + '"' +
+                        ' data-qpid="' + mw.html.escape(qpid) + '"' +
+                        ' data-hash="' + mw.html.escape(qs.hash || '') + '"' +
+                        ' data-dtype="' + mw.html.escape(qdtype) + '"' +
+                        ' data-raw="' + mw.html.escape(qRaw) + '"' +
+                        ' data-lang="' + mw.html.escape(qLang) + '">✎</button>' +
+                        ' <button class="wde-q-delbtn" title="Delete qualifier"' +
+                        ' data-guid="' + mw.html.escape(guid) + '"' +
+                        ' data-hash="' + mw.html.escape(qs.hash || '') + '">✕</button>'
+                        : '';
+                    return '<tr class="wde-qual-row">' +
+                        '<td class="wde-qprop">' + mw.html.escape(qLabel) + '</td>' +
+                        '<td class="wde-qval">' + snakHtml(qs, entLabels) + qBtns + '</td>' +
+                        '</tr>';
+                }).join('');
+            }).join('');
+
+            const addQBtn = IS_LOGGED_IN
+                ? '<tr class="wde-qual-addbtn-row"><td colspan="2">' +
+                '<button class="wde-q-addbtn" data-guid="' + mw.html.escape(guid) + '">' +
+                '+ Add qualifier</button></td></tr>'
+                : '';
+
+            qualsHtml =
+                '<div class="wde-quals">' +
+                '<table class="wde-quals-table">' +
+                rows + addQBtn +
+                '</table>' +
+                '</div>';
+        } else if (IS_LOGGED_IN) {
+            qualsHtml =
+                '<div class="wde-quals wde-quals-empty">' +
+                '<button class="wde-q-addbtn" data-guid="' + mw.html.escape(guid) + '">' +
+                '+ Add qualifier</button></div>';
+        }
+
+        return '<li data-guid="' + mw.html.escape(guid) + '">' +
+            '<div class="wde-claim-main">' + snakHtml(snak, entLabels) + editBtns + '</div>' +
+            qualsHtml +
+            '</li>';
+    }
 
     function propRowHtml(pid, propLabel, claimList, entLabels, qid) {
         const has = claimList && claimList.length > 0;
@@ -304,42 +443,14 @@
         // Value cell
         let valInner;
         if (has) {
-            const items = claimList.slice(0, 6).map(c => {
-                const snak = c.mainsnak;
-                const dv = snak.datavalue || {};
-                // Encode enough info for edit form to pre-populate itself
-                const dtype = dv.type || 'string';
-                let rawVal = '', rawLang = '';
-                if (dtype === 'string') { rawVal = dv.value || ''; }
-                else if (dtype === 'wikibase-entityid') {
-                    rawVal = dv.value ? (dv.value.id || ('Q' + dv.value['numeric-id'])) : '';
-                } else if (dtype === 'time') {
-                    const t = (dv.value && dv.value.time) ? dv.value.time.replace(/^\+/, '') : '';
-                    const p = dv.value ? dv.value.precision : 11;
-                    rawVal = p >= 11 ? t.slice(0, 10) : p === 10 ? t.slice(0, 7) : t.slice(0, 4);
-                } else if (dtype === 'quantity') { rawVal = dv.value ? dv.value.amount.replace(/^\+/, '') : ''; }
-                else if (dtype === 'monolingualtext') {
-                    rawVal = dv.value ? dv.value.text : '';
-                    rawLang = dv.value ? dv.value.language : '';
-                } else { rawVal = JSON.stringify(dv.value || ''); }
-
-                const editBtns = IS_LOGGED_IN
-                    ? ' <button class="wde-editbtn" title="Edit this value"' +
-                    ' data-guid="' + mw.html.escape(c.id || '') + '"' +
-                    ' data-dtype="' + mw.html.escape(dtype) + '"' +
-                    ' data-raw="' + mw.html.escape(rawVal) + '"' +
-                    ' data-lang="' + mw.html.escape(rawLang) + '">✎</button>' +
-                    ' <button class="wde-delbtn" title="Delete this value"' +
-                    ' data-guid="' + mw.html.escape(c.id || '') + '">✕</button>'
-                    : '';
-                return '<li data-guid="' + mw.html.escape(c.id || '') + '">' +
-                    snakHtml(snak, entLabels) + editBtns + '</li>';
-            }).join('');
+            const items = claimList.slice(0, 6).map(
+                c => claimItemHtml(c, entLabels, {})
+            ).join('');
             const more = claimList.length > 6
-                ? '<li class="wde-overflow">+' + (claimList.length - 6) + ' more…</li>' : '';
+                ? '<li class="wde-overflow">+' + (claimList.length - 6) + ' more\u2026</li>' : '';
             valInner = '<ul class="wde-vlist">' + items + more + '</ul>';
         } else {
-            valInner = '<span class="wde-empty">—</span>';
+            valInner = '<span class="wde-empty">\u2014</span>';
         }
         const addBtn = IS_LOGGED_IN
             ? '<button class="wde-addbtn cdx-button cdx-button--weight-normal"' +
@@ -356,9 +467,8 @@
             '<div class="wde-val-display">' + valInner + '</div>' +
             '<div class="wde-val-action">' + addBtn + refreshBtn + '</div>' +
             '<div class="wde-val-form"></div>' +
-            '</td>';;
+            '</td>';
 
-        // Status cell
         const statusCell =
             '<td class="wde-cell wde-col-status">' +
             '<span class="wde-status-chip ' + sCls + '">' + sLbl + '</span>' +
@@ -367,6 +477,8 @@
         return '<tr class="wde-row" data-pid="' + mw.html.escape(pid) + '">' +
             propCell + valCell + statusCell + '</tr>';
     }
+
+
 
     // ─────────────────────────────────────────────────────────────────
     //  INLINE ADD-VALUE FORM
@@ -807,60 +919,246 @@
                     const claims = entity.claims || {};
                     const claimList = claims[pid] || [];
 
-                    // Gather any entity IDs in these claims for label lookup
+                    // Gather all entity IDs needed for labels:
+                    // 1. main snak values, 2. qualifier snak values
                     const ids = [];
                     claimList.forEach(c => {
-                        const dv = (c.mainsnak || {}).datavalue || {};
-                        if (dv.type === 'wikibase-entityid' && dv.value) {
-                            ids.push(dv.value.id || ('Q' + dv.value['numeric-id']));
-                        }
+                        const mdv = (c.mainsnak || {}).datavalue || {};
+                        if (mdv.type === 'wikibase-entityid' && mdv.value)
+                            ids.push(mdv.value.id || ('Q' + mdv.value['numeric-id']));
+                        Object.values(c.qualifiers || {}).forEach(snaks =>
+                            snaks.forEach(qs => {
+                                const qdv = qs.datavalue || {};
+                                if (qdv.type === 'wikibase-entityid' && qdv.value)
+                                    ids.push(qdv.value.id || ('Q' + qdv.value['numeric-id']));
+                            })
+                        );
                     });
-                    const entLabels = ids.length ? await batchLabels(ids) : {};
 
-                    // Re-build the inner HTML exactly as propRowHtml does
+                    // Gather all qualifier property PIDs for label lookup
+                    const qPids = [];
+                    claimList.forEach(c =>
+                        Object.keys(c.qualifiers || {}).forEach(p => {
+                            if (!qPids.includes(p)) qPids.push(p);
+                        })
+                    );
+
+                    const [entLabels, propLabels] = await Promise.all([
+                        ids.length ? batchLabels(ids) : Promise.resolve({}),
+                        qPids.length ? batchLabels(qPids) : Promise.resolve({})
+                    ]);
+
                     let valInner;
                     if (claimList.length) {
-                        const items = claimList.slice(0, 6).map(c => {
-                            const snak = c.mainsnak;
-                            const dv = snak.datavalue || {};
-                            const dtype = dv.type || 'string';
-                            let rawVal = '', rawLang = '';
-                            if (dtype === 'string') { rawVal = dv.value || ''; }
-                            else if (dtype === 'wikibase-entityid') {
-                                rawVal = dv.value ? (dv.value.id || ('Q' + dv.value['numeric-id'])) : '';
-                            } else if (dtype === 'time') {
-                                const t = (dv.value && dv.value.time) ? dv.value.time.replace(/^\+/, '') : '';
-                                const p = dv.value ? dv.value.precision : 11;
-                                rawVal = p >= 11 ? t.slice(0, 10) : p === 10 ? t.slice(0, 7) : t.slice(0, 4);
-                            } else if (dtype === 'quantity') { rawVal = dv.value ? dv.value.amount.replace(/^\+/, '') : ''; }
-                            else if (dtype === 'monolingualtext') {
-                                rawVal = dv.value ? dv.value.text : '';
-                                rawLang = dv.value ? dv.value.language : '';
-                            } else { rawVal = JSON.stringify(dv.value || ''); }
-
-                            const editBtns = IS_LOGGED_IN
-                                ? ' <button class="wde-editbtn" title="Edit this value"' +
-                                ' data-guid="' + mw.html.escape(c.id || '') + '"' +
-                                ' data-dtype="' + mw.html.escape(dtype) + '"' +
-                                ' data-raw="' + mw.html.escape(rawVal) + '"' +
-                                ' data-lang="' + mw.html.escape(rawLang) + '">✎</button>' +
-                                ' <button class="wde-delbtn" title="Delete this value"' +
-                                ' data-guid="' + mw.html.escape(c.id || '') + '">✕</button>'
-                                : '';
-                            return '<li data-guid="' + mw.html.escape(c.id || '') + '">' +
-                                snakHtml(snak, entLabels) + editBtns + '</li>';
-                        }).join('');
+                        const items = claimList.slice(0, 6).map(
+                            c => claimItemHtml(c, entLabels, propLabels)
+                        ).join('');
                         const more = claimList.length > 6
-                            ? '<li class="wde-overflow">+' + (claimList.length - 6) + ' more…</li>' : '';
+                            ? '<li class="wde-overflow">+' + (claimList.length - 6) + ' more\u2026</li>' : '';
                         valInner = '<ul class="wde-vlist">' + items + more + '</ul>';
                     } else {
-                        valInner = '<span class="wde-empty">—</span>';
+                        valInner = '<span class="wde-empty">\u2014</span>';
                     }
                     $row.find('.wde-val-display').html(valInner);
-                } catch (_e) {
-                    // Fallback: just leave the display as-is if the refresh fails
-                }
+                } catch (_e) { /* leave display as-is on error */ }
             }
+
+            // \u2500\u2500 Qualifier: delete \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+            $tbody.on('click.wde-qdel', '.wde-q-delbtn', async function () {
+                const $btn = $(this);
+                const guid = $btn.data('guid');
+                const hash = $btn.data('hash');
+                const $row = $btn.closest('tr.wde-row');
+                const pid = $row.data('pid');
+                const qid = $('#wde-qid-chip a').text().trim() || PAGE_QID;
+                if (!confirm('Delete this qualifier?')) return;
+                $btn.prop('disabled', true).text('\u2026');
+                try {
+                    await removeQualifier(guid, hash);
+                    await refreshPropValueDisplay(qid, pid, $row);
+                } catch (e) {
+                    alert('\u26a0 Could not delete qualifier: ' + e.message);
+                    $btn.prop('disabled', false).text('\u2715');
+                }
+            });
+
+            // \u2500\u2500 Qualifier: edit \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+            $tbody.on('click.wde-qedit', '.wde-q-editbtn', function () {
+                const $btn = $(this);
+                const guid = $btn.data('guid');
+                const qpid = $btn.data('qpid');
+                const hash = $btn.data('hash');
+                const dtype = $btn.data('dtype');
+                const rawVal = $btn.data('raw');
+                const rawLang = $btn.data('lang') || '';
+                const $td = $btn.closest('td.wde-qval');
+                const $row = $btn.closest('tr.wde-row');
+                const pid = $row.data('pid');
+
+                $tbody.find('.wde-qual-inline').remove();
+
+                const typeMap = {
+                    'wikibase-entityid': 'item', 'time': 'time',
+                    'quantity': 'quantity', 'monolingualtext': 'monolingual', 'string': 'string'
+                };
+                const formType = typeMap[dtype] || 'string';
+
+                const $qf = $('<div class="wde-form wde-qual-inline"></div>');
+                $qf.append(
+                    $('<div class="wde-form-row wde-form-row-type"></div>').append(
+                        $('<select class="wde-type-sel cdx-select"></select>').append(
+                            $('<option>', { value: 'string', text: 'String / ID' }),
+                            $('<option>', { value: 'item', text: 'Wikidata item' }),
+                            $('<option>', { value: 'time', text: 'Date' }),
+                            $('<option>', { value: 'quantity', text: 'Quantity' }),
+                            $('<option>', { value: 'monolingual', text: 'Monolingual text' })
+                        ).val(formType),
+                        $('<input class="wde-lang-input cdx-text-input__input' +
+                            (formType === 'monolingual' ? '' : ' wde-hidden') + '"' +
+                            ' type="text" placeholder="lang e.g. en" maxlength="10" />').val(rawLang)
+                    ),
+                    $('<div class="wde-form-row wde-form-row-val"></div>').append(
+                        $('<div class="wde-ac-wrap"></div>').append(
+                            $('<input class="wde-val-input cdx-text-input__input" type="text" autocomplete="off" />')
+                                .val(rawVal)
+                                .data('qid', formType === 'item' ? rawVal : undefined),
+                            $('<div class="wde-ac-drop" hidden></div>')
+                        ),
+                        $('<button class="wde-save-btn cdx-button cdx-button--action-progressive cdx-button--weight-primary">Update</button>'),
+                        $('<button class="wde-cancel-btn cdx-button cdx-button--weight-quiet">Cancel</button>')
+                    ),
+                    $('<div class="wde-form-msg" hidden></div>')
+                );
+                $td.after($('<td></td>').append($qf));
+                // Actually append as a new row below
+                $td.closest('tr.wde-qual-row').after(
+                    $('<tr class="wde-qual-inline-row"><td colspan="2"></td></tr>')
+                        .find('td').append($qf).end()
+                );
+                $td.closest('tr.wde-qual-row').next().find('.wde-save-btn').on('click', async () => {
+                    const $f = $qf;
+                    const type = $f.find('.wde-type-sel').val();
+                    const stored = type === 'item' ? $f.find('.wde-val-input').data('qid') : null;
+                    const raw = stored || $f.find('.wde-val-input').val();
+                    const lang = $f.find('.wde-lang-input').val();
+                    const $msg = $f.find('.wde-form-msg');
+                    const $sav = $f.find('.wde-save-btn');
+                    $msg.prop('hidden', true).removeClass('wde-ok wde-err');
+                    let vo;
+                    try { vo = buildValueObj(type, raw, lang); }
+                    catch (e) { showMsg($msg, e.message, 'wde-err'); return; }
+                    $sav.prop('disabled', true).text('Saving\u2026');
+                    try {
+                        await editQualifier(guid, qpid, vo, hash);
+                        showMsg($msg, '\u2713 Updated!', 'wde-ok');
+                        setTimeout(async () => {
+                            $qf.closest('tr').remove();
+                            await refreshPropValueDisplay(
+                                $('#wde-qid-chip a').text().trim() || PAGE_QID, pid, $row
+                            );
+                        }, 1200);
+                    } catch (e) {
+                        showMsg($msg, '\u26a0 ' + e.message, 'wde-err');
+                        $sav.prop('disabled', false).text('Update');
+                    }
+                });
+                $td.closest('tr.wde-qual-row').next().find('.wde-cancel-btn')
+                    .on('click', () => $qf.closest('tr').remove());
+                if (formType === 'item') attachAutocomplete($qf);
+            });
+
+            // \u2500\u2500 Qualifier: add \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+            $tbody.on('click.wde-qadd', '.wde-q-addbtn', function () {
+                const guid = $(this).data('guid');
+                const $li = $(this).closest('li');
+                const $row = $(this).closest('tr.wde-row');
+                const pid = $row.data('pid');
+
+                $li.find('.wde-qual-new-form').remove();
+
+                const $qf = $('<div class="wde-form wde-qual-new-form"></div>');
+
+                // Row 0: qualifier property PID input
+                $qf.append(
+                    $('<div class="wde-form-row wde-form-row-type"></div>').append(
+                        $('<input class="wde-qpid-input cdx-text-input__input" type="text"' +
+                            ' placeholder="Qualifier property (e.g. P580)" maxlength="12" />')
+                    )
+                );
+                // Row 1: type selector
+                $qf.append(
+                    $('<div class="wde-form-row wde-form-row-type"></div>').append(
+                        $('<select class="wde-type-sel cdx-select"></select>').append(
+                            $('<option>', { value: 'string', text: 'String / ID' }),
+                            $('<option>', { value: 'item', text: 'Wikidata item' }),
+                            $('<option>', { value: 'time', text: 'Date' }),
+                            $('<option>', { value: 'quantity', text: 'Quantity' }),
+                            $('<option>', { value: 'monolingual', text: 'Monolingual text' })
+                        ),
+                        $('<input class="wde-lang-input cdx-text-input__input wde-hidden"' +
+                            ' type="text" placeholder="lang e.g. en" maxlength="10" />')
+                    )
+                );
+                // Row 2: value + buttons
+                $qf.append(
+                    $('<div class="wde-form-row wde-form-row-val"></div>').append(
+                        $('<div class="wde-ac-wrap"></div>').append(
+                            $('<input class="wde-val-input cdx-text-input__input" type="text"' +
+                                ' placeholder="Enter value\u2026" autocomplete="off" />'),
+                            $('<div class="wde-ac-drop" hidden></div>')
+                        ),
+                        $('<button class="wde-save-btn cdx-button cdx-button--action-progressive cdx-button--weight-primary">Add</button>'),
+                        $('<button class="wde-cancel-btn cdx-button cdx-button--weight-quiet">Cancel</button>')
+                    ),
+                    $('<div class="wde-form-msg" hidden></div>')
+                );
+
+                $li.find('.wde-quals').append($qf);
+
+                const $typeSel = $qf.find('.wde-type-sel');
+                const $valInput = $qf.find('.wde-val-input');
+                $typeSel.on('change', function () {
+                    const t = $(this).val();
+                    $qf.find('.wde-lang-input').toggleClass('wde-hidden', t !== 'monolingual');
+                    if (t === 'item') { attachAutocomplete($qf); }
+                    else { detachAutocomplete($qf); }
+                });
+
+                $qf.find('.wde-cancel-btn').on('click', () => $qf.remove());
+
+                $qf.find('.wde-save-btn').on('click', async () => {
+                    const qpid = $qf.find('.wde-qpid-input').val().trim().toUpperCase();
+                    const type = $typeSel.val();
+                    const stored = type === 'item' ? $valInput.data('qid') : null;
+                    const raw = stored || $valInput.val();
+                    const lang = $qf.find('.wde-lang-input').val();
+                    const $msg = $qf.find('.wde-form-msg');
+                    const $sav = $qf.find('.wde-save-btn');
+
+                    if (!/^P\d+$/i.test(qpid)) {
+                        showMsg($msg, 'Enter a property ID like P580.', 'wde-err'); return;
+                    }
+                    $msg.prop('hidden', true).removeClass('wde-ok wde-err');
+                    let vo;
+                    try { vo = buildValueObj(type, raw, lang); }
+                    catch (e) { showMsg($msg, e.message, 'wde-err'); return; }
+
+                    $sav.prop('disabled', true).text('Saving\u2026');
+                    try {
+                        await addQualifier(guid, qpid, vo);
+                        showMsg($msg, '\u2713 Qualifier added!', 'wde-ok');
+                        setTimeout(async () => {
+                            $qf.remove();
+                            await refreshPropValueDisplay(
+                                $('#wde-qid-chip a').text().trim() || PAGE_QID, pid, $row
+                            );
+                        }, 1200);
+                    } catch (e) {
+                        showMsg($msg, '\u26a0 ' + e.message, 'wde-err');
+                        $sav.prop('disabled', false).text('Add');
+                    }
+                });
+            });
 
             // ── Delete button ─────────────────────────────────────────
             $tbody.on('click.wde-del', '.wde-delbtn', async function () {
@@ -1264,8 +1562,38 @@
 
 /* ── Value column ─────────────────────────────── */
 .wde-vlist { margin:0; padding:0; list-style:none; }
-.wde-vlist li { padding:1px 0; line-height:1.5; }
-.wde-vlist li + li { border-top:1px dashed #eaecf0; padding-top:3px; margin-top:2px; }
+.wde-vlist li { padding:3px 0 6px; line-height:1.5; }
+.wde-vlist li + li { border-top:1px dashed #eaecf0; padding-top:5px; margin-top:2px; }
+.wde-claim-main { display:inline; }
+/* ── Qualifiers ───────────────────────────────── */
+.wde-quals {
+    margin:4px 0 2px 10px;
+    border-left:2px solid #eaecf0;
+    padding-left:8px;
+}
+.wde-quals-empty { /* no table, just the add btn */ }
+.wde-quals-table { border-collapse:collapse; width:100%; font-size:.82rem; }
+.wde-quals-table td { padding:1px 4px 1px 0; vertical-align:top; }
+.wde-qprop {
+    color:#3db2d0; font-style:italic; white-space:nowrap;
+    min-width:110px; max-width:160px; padding-right:8px !important;
+}
+.wde-qval { color:var(--color-base,#202122); word-break:break-word; }
+.wde-q-editbtn, .wde-q-delbtn {
+    border:none; background:transparent; cursor:pointer;
+    font-size:.78rem; color:#72777d; padding:0 2px;
+    opacity:.6; transition:opacity .15s, color .15s;
+}
+.wde-q-editbtn:hover { opacity:1; color:#3366cc; }
+.wde-q-delbtn:hover  { opacity:1; color:#c44; }
+.wde-q-addbtn {
+    font-size:.75rem; color:#3366cc; background:transparent; border:none;
+    cursor:pointer; padding:2px 0; text-decoration:underline dotted;
+}
+.wde-q-addbtn:hover { color:#004488; }
+.wde-qual-addbtn-row td { padding-top:3px; }
+.wde-qual-inline-row td { padding:4px 0; }
+.wde-qpid-input { max-width:200px; }
 .wde-entlink { color:#3366cc; text-decoration:none; }
 .wde-entlink:hover { text-decoration:underline; }
 .wde-extlink { color:#3366cc; text-decoration:none; word-break:break-all; }
